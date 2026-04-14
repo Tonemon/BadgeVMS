@@ -9,6 +9,17 @@
 #include <badgevms/keyboard.h>
 #include <string.h>
 
+#include <badgevms/process.h>
+#include <math.h>
+#include <stdatomic.h>
+#include <time.h>
+#include <unistd.h>
+#include "stb_image.h"
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 #define SCREEN_WIDTH  720
 #define SCREEN_HEIGHT 720
 
@@ -22,6 +33,52 @@
 #define CDE_BUTTON_COLOR  0xD4D0C8
 #define CDE_TITLE_BG      0x808080
 #define CDE_INACTIVE_TEXT 0x808080
+
+/* --- Boot screen scan thread state --- */
+static atomic_bool     g_scan_done  = false;
+static application_t **g_scan_apps  = NULL;
+static size_t          g_scan_count = 0;
+
+static void scan_thread(void *unused) {
+    (void)unused;
+
+    application_t          *app;
+    application_list_handle handle = application_list(&app);
+    /* handle is intentionally not closed: the application_t* pointers in
+     * g_scan_apps are owned by this handle and must stay valid for run_launcher(). */
+
+    printf("Scan thread: scanning installed applications\n");
+
+    size_t          count = 0;
+    application_t **apps  = NULL;
+
+    while (app) {
+        printf("  Name: %s  UID: %s  Binary: %s\n",
+               app->name, app->unique_identifier, app->binary_path);
+
+        if (app->binary_path && strlen(app->binary_path) &&
+            app->unique_identifier &&
+            strcmp(app->unique_identifier, "badgevms_launcher")        != 0 &&
+            strcmp(app->unique_identifier, "why2025_firmware_ota_c6") != 0) {
+            application_t **tmp = realloc(apps, sizeof(application_t *) * (count + 1));
+            if (!tmp) {
+                printf("Scan thread: OOM, stopping after %zu apps\n", count);
+                break;
+            }
+            apps          = tmp;
+            apps[count++] = app;
+        }
+        app = application_list_get_next(handle);
+    }
+
+    printf("Scan thread: found %zu launchable apps\n", count);
+
+    g_scan_apps  = apps;
+    g_scan_count = count;
+    /* seq-cst store: reader must use atomic_load(&g_scan_done) with acquire
+     * semantics (the default) before reading g_scan_apps / g_scan_count. */
+    atomic_store(&g_scan_done, true);
+}
 
 typedef struct {
     window_handle_t window;
