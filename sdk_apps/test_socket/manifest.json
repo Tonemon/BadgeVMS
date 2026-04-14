@@ -1,10 +1,10 @@
 {
-    "unique_identifier": "curl_test",
-    "name": "curl_test",
+    "unique_identifier": "test_socket",
+    "name": "[test] socket",
     "author": "Team:Badge",
     "version": "1",
     "interpreter": "",
     "metadata_file": "",
-    "binary_path": "curl_test.elf",
+    "binary_path": "test_socket.elf",
     "source": 1
 }

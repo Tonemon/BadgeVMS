@@ -1,10 +1,10 @@
 {
-    "unique_identifier": "process_test",
-    "name": "process_test",
+    "unique_identifier": "test_hardware",
+    "name": "[test] hardware",
     "author": "Team:Badge",
     "version": "1",
     "interpreter": "",
     "metadata_file": "",
-    "binary_path": "process_test.elf",
+    "binary_path": "test_hardware.elf",
     "source": 1
 }

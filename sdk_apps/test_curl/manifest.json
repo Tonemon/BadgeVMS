@@ -1,10 +1,10 @@
 {
-    "unique_identifier": "appdb_test",
-    "name": "appdb_test",
+    "unique_identifier": "test_curl",
+    "name": "[test] curl",
     "author": "Team:Badge",
     "version": "1",
     "interpreter": "",
     "metadata_file": "",
-    "binary_path": "appdb_test.elf",
+    "binary_path": "test_curl.elf",
     "source": 1
 }

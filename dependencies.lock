@@ -97,7 +97,7 @@ dependencies:
   idf:
     source:
       type: idf
-    version: 5.5.0
+    version: 5.5.4
 direct_dependencies:
 - espressif/cmake_utilities
 - espressif/esp-serial-flasher

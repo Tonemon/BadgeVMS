@@ -31,11 +31,11 @@ _Note: When you do a `git pull` please run an `idf.py fullclean` before rebuildi
 
 The directory [sdk_apps](sdk_apps) has several small programs in it.
 
-* [framebuffer_test](sdk_apps/framebuffer_test) shows you how to directly interact with the windowing system and keyboard input.
+* [test_framebuffer](sdk_apps/test_framebuffer) shows you how to directly interact with the windowing system and keyboard input.
 * [sdl_test](sdk_apps/sdl_test) does the same, but for SDL3.
 * [sdl2_test](sdk_apps/sdl2_test) does the same, but for SDL2.
-* [curl_test](sdk_apps/curl_test) shows you how to do http(s) calls, 
-* [thread_test](sdk_apps/thread_test) has a simple example of creating a thread and how to interact with workers.
+* [test_curl](sdk_apps/test_curl) shows you how to do http(s) calls, 
+* [test_thread](sdk_apps/test_thread) has a simple example of creating a thread and how to interact with workers.
 * And many more!
 
 Finally as a more complete example there is also [doomgeneric](sdk_apps/doomgeneric) a full-fledged doom port! In particular check out [doomgeneric_badgevms.c](sdk_apps/doomgeneric/doomgeneric/doomgeneric_badgevms.c) for examples of framebuffers, scaling, window handling, input, etc.

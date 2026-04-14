@@ -173,7 +173,7 @@ build_app(why2025_namebadge PREINSTALL
      image.c
 )
 
-build_app(doomgeneric
+build_app(doomgeneric PREINSTALL
     SOURCES
      doomgeneric/am_map.c
      doomgeneric/d_event.c
@@ -265,7 +265,7 @@ build_app(doomgeneric
 # Diagnostic apps
 #
 
-build_app(hardware_test
+build_app(test_hardware PREINSTALL
     SOURCES
      thirdparty/microui.c
      test_badge.c
@@ -274,7 +274,7 @@ build_app(hardware_test
      run_tests.c
 )
 
-build_app(memtester
+build_app(memtester PREINSTALL
     SOURCES
      memtester.c
      tests.c
@@ -284,38 +284,43 @@ build_app(memtester
      "TEST_NARROW_WRITES=(1)"
 )
 
-build_app(bench_basic_a
-    SOURCES 
-     bench_basic_a.c
+build_app(bench_basic_a PREINSTALL
+    SOURCES
+     main.c
 )
 
-build_app(bench_basic_b
+build_app(bench_basic_b PREINSTALL
     SOURCES
-     bench_basic_b.c
+     main.c
 )
 
 #
 # Example apps
 #
 
-build_app(appdb_test
+build_app(test_appdb PREINSTALL
     SOURCES
      main.c
 )
 
-build_app(bmi270_test
+build_app(test_bmi270 PREINSTALL
     SOURCES
-     bmi270_test.c
+     main.c
 )
 
-build_app(curl_test
+build_app(test_bme690 PREINSTALL
     SOURCES
-     curl_test.c
+     main.c
 )
 
-build_app(framebuffer_test
+build_app(test_curl PREINSTALL
     SOURCES
-     framebuffer_test_a.c
+     main.c
+)
+
+build_app(test_framebuffer PREINSTALL
+    SOURCES
+     main.c
 )
 
 build_app(hello PREINSTALL
@@ -323,44 +328,44 @@ build_app(hello PREINSTALL
      main.c
 )
 
-build_app(process_test
+build_app(test_process PREINSTALL
     SOURCES
      main.c
 )
 
-build_app(readdir_test
+build_app(test_readdir PREINSTALL
     SOURCES
      main.c
 )
 
-build_app(socket_test
+build_app(test_socket PREINSTALL
     SOURCES
-     socket_test.c
+     main.c
 )
 
 # AKA Snake
 build_app(sdl_test PREINSTALL
     SOURCES
-     sdl_test.c
+     main.c
     LIBRARIES
      sdl3
 )
 
 build_app(sdl2_test PREINSTALL
     SOURCES
-     sdl2_test.c
+     main.c
     LIBRARIES
      sdl2
 )
 
-build_app(thread_test
+build_app(test_thread PREINSTALL
     SOURCES
      main.c
 )
 
-build_app(wifi_test
+build_app(test_wifi PREINSTALL
     SOURCES
-     wifi_test.c
+     main.c
 )
 
 get_property(SDK_APP_ELFS GLOBAL PROPERTY SDK_APP_ELFS)
