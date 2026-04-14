@@ -486,26 +486,82 @@ static bool run_launcher(
 }
 
 int main(int argc, char *argv[]) {
-    size_t                  num_apps = 0;
-    application_t          *app;
-    application_list_handle app_list = application_list(&app);
-    application_t         **apps     = NULL;
-
-    printf("Currently installed applications: \n");
-    while (app) {
-        printf("Name: %s\n", app->name);
-        printf("  UID: %s\n", app->unique_identifier);
-        printf("  Version: %s\n", app->version);
-        printf("  Binary : %s\n", app->binary_path);
-        if (app->binary_path && strlen(app->binary_path) && app->unique_identifier &&
-            (strcmp(app->unique_identifier, "badgevms_launcher") != 0) &&
-            (strcmp(app->unique_identifier, "why2025_firmware_ota_c6") != 0)) {
-            ++num_apps;
-            apps               = realloc(apps, sizeof(application_t *) * num_apps);
-            apps[num_apps - 1] = app;
-        }
-        app = application_list_get_next(app_list);
+    /* 1. Create window and framebuffer once — reused by boot screen and launcher */
+    window_handle_t window = window_create(
+        "Application Launcher",
+        (window_size_t){SCREEN_WIDTH, SCREEN_HEIGHT},
+        WINDOW_FLAG_DOUBLE_BUFFERED | WINDOW_FLAG_FULLSCREEN | WINDOW_FLAG_LOW_PRIORITY
+    );
+    if (!window) {
+        printf("Window could not be created\n");
+        return 1;
     }
 
-    run_launcher(apps, num_apps);
+    framebuffer_t *framebuffer = window_framebuffer_create(
+        window,
+        (window_size_t){SCREEN_WIDTH, SCREEN_HEIGHT},
+        BADGEVMS_PIXELFORMAT_RGB565
+    );
+    if (!framebuffer) {
+        printf("Framebuffer could not be created\n");
+        window_destroy(window);
+        return 1;
+    }
+
+    /* 2. Load WHY logo (failure is non-fatal — boot screen will be text-only) */
+    int            logo_w = 0, logo_h = 0, logo_ch_in_file = 0;
+    unsigned char *logo_data = stbi_load(
+        "APPS:[badgevms_launcher]logo.png",
+        &logo_w, &logo_h, &logo_ch_in_file, 4
+    );
+    int logo_ch = logo_data ? 4 : 0;
+    if (!logo_data) {
+        printf("Warning: could not load logo.png, boot screen will be text-only\n");
+    }
+
+    /* 3. Record boot start time */
+    struct timespec boot_start;
+    clock_gettime(CLOCK_MONOTONIC, &boot_start);
+
+    /* 4. Spawn background scan thread */
+    atomic_store(&g_scan_done, false);
+    if (thread_create(scan_thread, NULL, 16384) == -1) {
+        /* Fallback: scan synchronously then animate for the minimum period */
+        printf("Warning: thread_create failed, scanning synchronously\n");
+        scan_thread(NULL);
+    }
+
+    /* 5. Boot animation loop — runs until scan done AND 2000 ms elapsed */
+    Launcher_Context boot_ctx = {0};
+    boot_ctx.pixels = framebuffer->pixels;
+
+    while (1) {
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        long sec  = now.tv_sec  - boot_start.tv_sec;
+        long nsec = now.tv_nsec - boot_start.tv_nsec;
+        if (nsec < 0) { sec--; nsec += 1000000000L; }
+        uint32_t elapsed_ms = (uint32_t)(sec * 1000 + nsec / 1000000);
+
+        /* Brightness: sine wave 0.75 → 1.0, period 2 s */
+        float bright    = 0.875f + 0.125f * sinf(2.0f * (float)M_PI * elapsed_ms / 2000.0f);
+        int   dot_count = (int)(elapsed_ms / 500) % 4;
+
+        draw_boot_screen(&boot_ctx, logo_data, logo_w, logo_h, logo_ch, bright, dot_count);
+        window_present(window, true, NULL, 0);
+
+        if (atomic_load(&g_scan_done) && elapsed_ms >= 2000)
+            break;
+
+        usleep(33 * 1000); /* ~30 fps */
+    }
+
+    /* 6. Clean up logo pixels — no longer needed */
+    if (logo_data)
+        stbi_image_free(logo_data);
+
+    /* 7. Hand off to launcher with pre-created window and scanned app list */
+    run_launcher(window, framebuffer, g_scan_apps, g_scan_count);
+
+    return 0;
 }
