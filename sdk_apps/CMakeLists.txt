@@ -285,13 +285,13 @@ build_app(memtester PREINSTALL
 )
 
 build_app(bench_basic_a PREINSTALL
-    SOURCES 
-     bench_basic_a.c
+    SOURCES
+     main.c
 )
 
 build_app(bench_basic_b PREINSTALL
     SOURCES
-     bench_basic_b.c
+     main.c
 )
 
 #
@@ -305,17 +305,17 @@ build_app(test_appdb PREINSTALL
 
 build_app(bmi270_test PREINSTALL
     SOURCES
-     bmi270_test.c
+     main.c
 )
 
 build_app(curl_test PREINSTALL
     SOURCES
-     curl_test.c
+     main.c
 )
 
 build_app(framebuffer_test PREINSTALL
     SOURCES
-     framebuffer_test_a.c
+     main.c
 )
 
 build_app(hello PREINSTALL
@@ -335,20 +335,20 @@ build_app(readdir_test PREINSTALL
 
 build_app(socket_test PREINSTALL
     SOURCES
-     socket_test.c
+     main.c
 )
 
 # AKA Snake
 build_app(sdl_test PREINSTALL
     SOURCES
-     sdl_test.c
+     main.c
     LIBRARIES
      sdl3
 )
 
 build_app(sdl2_test PREINSTALL
     SOURCES
-     sdl2_test.c
+     main.c
     LIBRARIES
      sdl2
 )
@@ -360,7 +360,7 @@ build_app(thread_test PREINSTALL
 
 build_app(test_wifi PREINSTALL
     SOURCES
-     test_wifi.c
+     main.c
 )
 
 get_property(SDK_APP_ELFS GLOBAL PROPERTY SDK_APP_ELFS)
