@@ -1,10 +1,10 @@
 {
-    "unique_identifier": "socket_test",
-    "name": "socket_test",
+    "unique_identifier": "test_socket",
+    "name": "[test] Socket",
     "author": "Team:Badge",
     "version": "1",
     "interpreter": "",
     "metadata_file": "",
-    "binary_path": "socket_test.elf",
+    "binary_path": "test_socket.elf",
     "source": 1
 }

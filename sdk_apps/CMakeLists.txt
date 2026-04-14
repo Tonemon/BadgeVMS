@@ -303,7 +303,12 @@ build_app(test_appdb PREINSTALL
      main.c
 )
 
-build_app(bmi270_test PREINSTALL
+build_app(test_bmi270 PREINSTALL
+    SOURCES
+     main.c
+)
+
+build_app(test_bme690 PREINSTALL
     SOURCES
      main.c
 )
@@ -333,7 +338,7 @@ build_app(readdir_test PREINSTALL
      main.c
 )
 
-build_app(socket_test PREINSTALL
+build_app(test_socket PREINSTALL
     SOURCES
      main.c
 )
@@ -353,7 +358,7 @@ build_app(sdl2_test PREINSTALL
      sdl2
 )
 
-build_app(thread_test PREINSTALL
+build_app(test_thread PREINSTALL
     SOURCES
      main.c
 )

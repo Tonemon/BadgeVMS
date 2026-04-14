@@ -1,6 +1,6 @@
 {
     "unique_identifier": "test_wifi",
-    "name": "test_wifi",
+    "name": "[test] WiFi",
     "author": "Team:Badge",
     "version": "1",
     "interpreter": "",
