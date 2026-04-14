@@ -298,7 +298,7 @@ build_app(bench_basic_b PREINSTALL
 # Example apps
 #
 
-build_app(appdb_test PREINSTALL
+build_app(test_appdb PREINSTALL
     SOURCES
      main.c
 )

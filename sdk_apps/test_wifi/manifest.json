@@ -5,6 +5,6 @@
     "version": "1",
     "interpreter": "",
     "metadata_file": "",
-    "binary_path": "test_wifi",
+    "binary_path": "test_wifi.elf",
     "source": 1
 }
