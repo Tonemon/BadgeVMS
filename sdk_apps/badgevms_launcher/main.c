@@ -9,6 +9,17 @@
 #include <badgevms/keyboard.h>
 #include <string.h>
 
+#include <badgevms/process.h>
+#include <math.h>
+#include <stdatomic.h>
+#include <time.h>
+#include <unistd.h>
+#include "stb_image.h"
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 #define SCREEN_WIDTH  720
 #define SCREEN_HEIGHT 720
 
@@ -22,6 +33,52 @@
 #define CDE_BUTTON_COLOR  0xD4D0C8
 #define CDE_TITLE_BG      0x808080
 #define CDE_INACTIVE_TEXT 0x808080
+
+/* --- Boot screen scan thread state --- */
+static atomic_bool     g_scan_done  = false;
+static application_t **g_scan_apps  = NULL;
+static size_t          g_scan_count = 0;
+
+static void scan_thread(void *unused) {
+    (void)unused;
+
+    application_t          *app;
+    application_list_handle handle = application_list(&app);
+    /* handle is intentionally not closed: the application_t* pointers in
+     * g_scan_apps are owned by this handle and must stay valid for run_launcher(). */
+
+    printf("Scan thread: scanning installed applications\n");
+
+    size_t          count = 0;
+    application_t **apps  = NULL;
+
+    while (app) {
+        printf("  Name: %s  UID: %s  Binary: %s\n",
+               app->name, app->unique_identifier, app->binary_path);
+
+        if (app->binary_path && strlen(app->binary_path) &&
+            app->unique_identifier &&
+            strcmp(app->unique_identifier, "badgevms_launcher")        != 0 &&
+            strcmp(app->unique_identifier, "why2025_firmware_ota_c6") != 0) {
+            application_t **tmp = realloc(apps, sizeof(application_t *) * (count + 1));
+            if (!tmp) {
+                printf("Scan thread: OOM, stopping after %zu apps\n", count);
+                break;
+            }
+            apps          = tmp;
+            apps[count++] = app;
+        }
+        app = application_list_get_next(handle);
+    }
+
+    printf("Scan thread: found %zu launchable apps\n", count);
+
+    g_scan_apps  = apps;
+    g_scan_count = count;
+    /* seq-cst store: reader must use atomic_load(&g_scan_done) with acquire
+     * semantics (the default) before reading g_scan_apps / g_scan_count. */
+    atomic_store(&g_scan_done, true);
+}
 
 typedef struct {
     window_handle_t window;
@@ -329,7 +386,68 @@ static void handle_keyboard(Launcher_Context *ctx, keyboard_scancode_t key_code)
     }
 }
 
-static bool run_launcher(application_t **applications, size_t num) {
+static void draw_boot_screen(
+    Launcher_Context *ctx,
+    unsigned char    *logo_data,
+    int               logo_w,
+    int               logo_h,
+    int               logo_ch,
+    float             bright,
+    int               dot_count
+) {
+    if (bright > 1.0f) bright = 1.0f;
+    if (bright < 0.0f) bright = 0.0f;
+
+    /* Clear to black */
+    memset(ctx->pixels, 0, SCREEN_WIDTH * SCREEN_HEIGHT * sizeof(uint16_t));
+
+    /* Draw logo centred horizontally, slightly above vertical centre */
+    int dest_x = (SCREEN_WIDTH  - logo_w) / 2;
+    int dest_y = (SCREEN_HEIGHT - logo_h) / 2 - 40;
+
+    if (logo_data && logo_ch >= 3) {
+
+        for (int y = 0; y < logo_h; y++) {
+            for (int x = 0; x < logo_w; x++) {
+                int     idx = (y * logo_w + x) * logo_ch;
+                uint8_t a   = (logo_ch == 4) ? logo_data[idx + 3] : 255;
+                if (a < 128)
+                    continue;
+                uint8_t r = (uint8_t)(logo_data[idx]     * bright);
+                uint8_t g = (uint8_t)(logo_data[idx + 1] * bright);
+                uint8_t b = (uint8_t)(logo_data[idx + 2] * bright);
+                int px = dest_x + x;
+                int py = dest_y + y;
+                if (px >= 0 && px < SCREEN_WIDTH && py >= 0 && py < SCREEN_HEIGHT)
+                    ctx->pixels[py * SCREEN_WIDTH + px] =
+                        rgb888_to_rgb565_color(((uint32_t)r << 16) | ((uint32_t)g << 8) | b);
+            }
+        }
+    }
+
+    /* Draw animated status text below the logo */
+    static char const *dots[] = {"", ".", "..", "..."};
+    char status[48];
+    snprintf(status, sizeof(status), "Initializing WHY2025 badge%s", dots[dot_count & 3]);
+
+    int logo_top    = (logo_data && logo_ch >= 3) ? dest_y : SCREEN_HEIGHT / 2 - 40;
+    int logo_bottom = logo_top + ((logo_data && logo_ch >= 3) ? logo_h : 0);
+    int text_y      = logo_bottom + 32;
+
+    draw_text_centered(ctx, 0, text_y, SCREEN_WIDTH, status, 0xAAAAAA);
+}
+
+static bool run_launcher(
+    window_handle_t window,
+    framebuffer_t  *framebuffer,
+    application_t **applications,
+    size_t          num
+) {
+    if (!window || !framebuffer) {
+        printf("run_launcher: null window or framebuffer\n");
+        return false;
+    }
+
     printf("Starting application launcher with %zu applications\n", num);
 
     Launcher_Context ctx = {0};
@@ -340,29 +458,9 @@ static bool run_launcher(application_t **applications, size_t num) {
     ctx.show_about       = false;
     ctx.quit             = false;
 
-    ctx.window = window_create(
-        "Application Launcher",
-        (window_size_t){SCREEN_WIDTH, SCREEN_HEIGHT},
-        WINDOW_FLAG_DOUBLE_BUFFERED | WINDOW_FLAG_FULLSCREEN | WINDOW_FLAG_LOW_PRIORITY
-    );
-
-    if (ctx.window == NULL) {
-        printf("Window could not be created\n");
-        return false;
-    }
-
-    ctx.framebuffer = window_framebuffer_create(
-        ctx.window,
-        (window_size_t){SCREEN_WIDTH, SCREEN_HEIGHT},
-        BADGEVMS_PIXELFORMAT_RGB565
-    );
-
-    if (ctx.framebuffer == NULL) {
-        printf("Framebuffer texture could not be created\n");
-        return false;
-    }
-
-    ctx.pixels = ctx.framebuffer->pixels;
+    ctx.window      = window;
+    ctx.framebuffer = framebuffer;
+    ctx.pixels      = framebuffer->pixels;
     event_t e;
 
     while (!ctx.quit) {
@@ -388,26 +486,82 @@ static bool run_launcher(application_t **applications, size_t num) {
 }
 
 int main(int argc, char *argv[]) {
-    size_t                  num_apps = 0;
-    application_t          *app;
-    application_list_handle app_list = application_list(&app);
-    application_t         **apps     = NULL;
-
-    printf("Currently installed applications: \n");
-    while (app) {
-        printf("Name: %s\n", app->name);
-        printf("  UID: %s\n", app->unique_identifier);
-        printf("  Version: %s\n", app->version);
-        printf("  Binary : %s\n", app->binary_path);
-        if (app->binary_path && strlen(app->binary_path) && app->unique_identifier &&
-            (strcmp(app->unique_identifier, "badgevms_launcher") != 0) &&
-            (strcmp(app->unique_identifier, "why2025_firmware_ota_c6") != 0)) {
-            ++num_apps;
-            apps               = realloc(apps, sizeof(application_t *) * num_apps);
-            apps[num_apps - 1] = app;
-        }
-        app = application_list_get_next(app_list);
+    /* 1. Create window and framebuffer once — reused by boot screen and launcher */
+    window_handle_t window = window_create(
+        "Application Launcher",
+        (window_size_t){SCREEN_WIDTH, SCREEN_HEIGHT},
+        WINDOW_FLAG_DOUBLE_BUFFERED | WINDOW_FLAG_FULLSCREEN | WINDOW_FLAG_LOW_PRIORITY
+    );
+    if (!window) {
+        printf("Window could not be created\n");
+        return 1;
     }
 
-    run_launcher(apps, num_apps);
+    framebuffer_t *framebuffer = window_framebuffer_create(
+        window,
+        (window_size_t){SCREEN_WIDTH, SCREEN_HEIGHT},
+        BADGEVMS_PIXELFORMAT_RGB565
+    );
+    if (!framebuffer) {
+        printf("Framebuffer could not be created\n");
+        window_destroy(window);
+        return 1;
+    }
+
+    /* 2. Load WHY logo (failure is non-fatal — boot screen will be text-only) */
+    int            logo_w = 0, logo_h = 0, logo_ch_in_file = 0;
+    unsigned char *logo_data = stbi_load(
+        "APPS:[badgevms_launcher]logo.png",
+        &logo_w, &logo_h, &logo_ch_in_file, 4
+    );
+    int logo_ch = logo_data ? 4 : 0;
+    if (!logo_data) {
+        printf("Warning: could not load logo.png, boot screen will be text-only\n");
+    }
+
+    /* 3. Record boot start time */
+    struct timespec boot_start;
+    clock_gettime(CLOCK_MONOTONIC, &boot_start);
+
+    /* 4. Spawn background scan thread */
+    atomic_store(&g_scan_done, false);
+    if (thread_create(scan_thread, NULL, 16384) == -1) {
+        /* Fallback: scan synchronously then animate for the minimum period */
+        printf("Warning: thread_create failed, scanning synchronously\n");
+        scan_thread(NULL);
+    }
+
+    /* 5. Boot animation loop — runs until scan done AND 2000 ms elapsed */
+    Launcher_Context boot_ctx = {0};
+    boot_ctx.pixels = framebuffer->pixels;
+
+    while (1) {
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        long sec  = now.tv_sec  - boot_start.tv_sec;
+        long nsec = now.tv_nsec - boot_start.tv_nsec;
+        if (nsec < 0) { sec--; nsec += 1000000000L; }
+        uint32_t elapsed_ms = (uint32_t)(sec * 1000 + nsec / 1000000);
+
+        /* Brightness: sine wave 0.75 → 1.0, period 2 s */
+        float bright    = 0.875f + 0.125f * sinf(2.0f * (float)M_PI * elapsed_ms / 2000.0f);
+        int   dot_count = (int)(elapsed_ms / 500) % 4;
+
+        draw_boot_screen(&boot_ctx, logo_data, logo_w, logo_h, logo_ch, bright, dot_count);
+        window_present(window, true, NULL, 0);
+
+        if (atomic_load(&g_scan_done) && elapsed_ms >= 2000)
+            break;
+
+        usleep(33 * 1000); /* ~30 fps */
+    }
+
+    /* 6. Clean up logo pixels — no longer needed */
+    if (logo_data)
+        stbi_image_free(logo_data);
+
+    /* 7. Hand off to launcher with pre-created window and scanned app list */
+    run_launcher(window, framebuffer, g_scan_apps, g_scan_count);
+
+    return 0;
 }

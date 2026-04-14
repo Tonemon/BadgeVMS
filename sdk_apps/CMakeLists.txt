@@ -147,6 +147,7 @@ build_app(why2025_ota PREINSTALL
 build_app(badgevms_launcher PREINSTALL
     SOURCES
      main.c
+     image.c
 )
 
 build_app(badgevms_settings PREINSTALL
