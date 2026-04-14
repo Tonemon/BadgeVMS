@@ -265,7 +265,7 @@ build_app(doomgeneric PREINSTALL
 # Diagnostic apps
 #
 
-build_app(hardware_test PREINSTALL
+build_app(test_hardware PREINSTALL
     SOURCES
      thirdparty/microui.c
      test_badge.c
