@@ -8,3 +8,6 @@ sdk_dist/
 .vscode
 .clangd
 .cache
+
+.superpowers/
+docs/

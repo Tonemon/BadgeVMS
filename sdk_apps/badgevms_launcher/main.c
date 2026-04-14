@@ -386,6 +386,57 @@ static void handle_keyboard(Launcher_Context *ctx, keyboard_scancode_t key_code)
     }
 }
 
+static void draw_boot_screen(
+    Launcher_Context *ctx,
+    unsigned char    *logo_data,
+    int               logo_w,
+    int               logo_h,
+    int               logo_ch,
+    float             bright,
+    int               dot_count
+) {
+    if (bright > 1.0f) bright = 1.0f;
+    if (bright < 0.0f) bright = 0.0f;
+
+    /* Clear to black */
+    memset(ctx->pixels, 0, SCREEN_WIDTH * SCREEN_HEIGHT * sizeof(uint16_t));
+
+    /* Draw logo centred horizontally, slightly above vertical centre */
+    int dest_x = (SCREEN_WIDTH  - logo_w) / 2;
+    int dest_y = (SCREEN_HEIGHT - logo_h) / 2 - 40;
+
+    if (logo_data && logo_ch >= 3) {
+
+        for (int y = 0; y < logo_h; y++) {
+            for (int x = 0; x < logo_w; x++) {
+                int     idx = (y * logo_w + x) * logo_ch;
+                uint8_t a   = (logo_ch == 4) ? logo_data[idx + 3] : 255;
+                if (a < 128)
+                    continue;
+                uint8_t r = (uint8_t)(logo_data[idx]     * bright);
+                uint8_t g = (uint8_t)(logo_data[idx + 1] * bright);
+                uint8_t b = (uint8_t)(logo_data[idx + 2] * bright);
+                int px = dest_x + x;
+                int py = dest_y + y;
+                if (px >= 0 && px < SCREEN_WIDTH && py >= 0 && py < SCREEN_HEIGHT)
+                    ctx->pixels[py * SCREEN_WIDTH + px] =
+                        rgb888_to_rgb565_color(((uint32_t)r << 16) | ((uint32_t)g << 8) | b);
+            }
+        }
+    }
+
+    /* Draw animated status text below the logo */
+    static char const *dots[] = {"", ".", "..", "..."};
+    char status[48];
+    snprintf(status, sizeof(status), "Initializing WHY2025 badge%s", dots[dot_count & 3]);
+
+    int logo_top    = (logo_data && logo_ch >= 3) ? dest_y : SCREEN_HEIGHT / 2 - 40;
+    int logo_bottom = logo_top + ((logo_data && logo_ch >= 3) ? logo_h : 0);
+    int text_y      = logo_bottom + 32;
+
+    draw_text_centered(ctx, 0, text_y, SCREEN_WIDTH, status, 0xAAAAAA);
+}
+
 static bool run_launcher(
     window_handle_t window,
     framebuffer_t  *framebuffer,
