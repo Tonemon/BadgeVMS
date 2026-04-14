@@ -313,12 +313,12 @@ build_app(test_bme690 PREINSTALL
      main.c
 )
 
-build_app(curl_test PREINSTALL
+build_app(test_curl PREINSTALL
     SOURCES
      main.c
 )
 
-build_app(framebuffer_test PREINSTALL
+build_app(test_framebuffer PREINSTALL
     SOURCES
      main.c
 )
@@ -328,12 +328,12 @@ build_app(hello PREINSTALL
      main.c
 )
 
-build_app(process_test PREINSTALL
+build_app(test_process PREINSTALL
     SOURCES
      main.c
 )
 
-build_app(readdir_test PREINSTALL
+build_app(test_readdir PREINSTALL
     SOURCES
      main.c
 )

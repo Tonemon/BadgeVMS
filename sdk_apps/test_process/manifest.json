@@ -1,10 +1,10 @@
 {
-    "unique_identifier": "readdir_test",
-    "name": "readdir_test",
+    "unique_identifier": "test_process",
+    "name": "[test] process",
     "author": "Team:Badge",
     "version": "1",
     "interpreter": "",
     "metadata_file": "",
-    "binary_path": "readdir_test.elf",
+    "binary_path": "test_process.elf",
     "source": 1
 }

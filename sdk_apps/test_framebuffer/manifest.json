@@ -1,0 +1,10 @@
+{
+    "unique_identifier": "test_framebuffer",
+    "name": "[test] framebuffer",
+    "author": "Team:Badge",
+    "version": "1",
+    "interpreter": "",
+    "metadata_file": "",
+    "binary_path": "test_framebuffer.elf",
+    "source": 1
+}
