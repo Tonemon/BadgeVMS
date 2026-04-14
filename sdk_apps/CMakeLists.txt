@@ -173,7 +173,7 @@ build_app(why2025_namebadge PREINSTALL
      image.c
 )
 
-build_app(doomgeneric
+build_app(doomgeneric PREINSTALL
     SOURCES
      doomgeneric/am_map.c
      doomgeneric/d_event.c
@@ -265,7 +265,7 @@ build_app(doomgeneric
 # Diagnostic apps
 #
 
-build_app(hardware_test
+build_app(hardware_test PREINSTALL
     SOURCES
      thirdparty/microui.c
      test_badge.c
@@ -274,7 +274,7 @@ build_app(hardware_test
      run_tests.c
 )
 
-build_app(memtester
+build_app(memtester PREINSTALL
     SOURCES
      memtester.c
      tests.c
@@ -284,12 +284,12 @@ build_app(memtester
      "TEST_NARROW_WRITES=(1)"
 )
 
-build_app(bench_basic_a
+build_app(bench_basic_a PREINSTALL
     SOURCES 
      bench_basic_a.c
 )
 
-build_app(bench_basic_b
+build_app(bench_basic_b PREINSTALL
     SOURCES
      bench_basic_b.c
 )
@@ -298,22 +298,22 @@ build_app(bench_basic_b
 # Example apps
 #
 
-build_app(appdb_test
+build_app(appdb_test PREINSTALL
     SOURCES
      main.c
 )
 
-build_app(bmi270_test
+build_app(bmi270_test PREINSTALL
     SOURCES
      bmi270_test.c
 )
 
-build_app(curl_test
+build_app(curl_test PREINSTALL
     SOURCES
      curl_test.c
 )
 
-build_app(framebuffer_test
+build_app(framebuffer_test PREINSTALL
     SOURCES
      framebuffer_test_a.c
 )
@@ -323,17 +323,17 @@ build_app(hello PREINSTALL
      main.c
 )
 
-build_app(process_test
+build_app(process_test PREINSTALL
     SOURCES
      main.c
 )
 
-build_app(readdir_test
+build_app(readdir_test PREINSTALL
     SOURCES
      main.c
 )
 
-build_app(socket_test
+build_app(socket_test PREINSTALL
     SOURCES
      socket_test.c
 )
@@ -353,12 +353,12 @@ build_app(sdl2_test PREINSTALL
      sdl2
 )
 
-build_app(thread_test
+build_app(thread_test PREINSTALL
     SOURCES
      main.c
 )
 
-build_app(wifi_test
+build_app(wifi_test PREINSTALL
     SOURCES
      wifi_test.c
 )
