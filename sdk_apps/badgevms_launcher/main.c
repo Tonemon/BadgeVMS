@@ -380,6 +380,65 @@ static void draw_launcher_window(Launcher_Context *ctx) {
     );
 }
 
+/* enter_folder — switch from home view into a named folder's app list */
+static void enter_folder(Launcher_Context *ctx, const char *folder_name) {
+    /* Save home navigation state */
+    ctx->saved_home_selected = ctx->selected_item;
+    ctx->saved_home_scroll   = ctx->scroll_offset;
+
+    /* Collect apps that belong to this folder (JSON order) */
+    ctx->folder_apps      = NULL;
+    ctx->folder_app_count = 0;
+
+    cJSON *folders_arr = ctx->folders_json
+        ? cJSON_GetObjectItem(ctx->folders_json, "folders") : NULL;
+
+    if (folders_arr) {
+        cJSON *folder_obj;
+        cJSON_ArrayForEach(folder_obj, folders_arr) {
+            cJSON *fname = cJSON_GetObjectItem(folder_obj, "name");
+            if (!fname) continue;
+            if (strcmp(cJSON_GetStringValue(fname), folder_name) != 0) continue;
+
+            cJSON *uids = cJSON_GetObjectItem(folder_obj, "apps");
+            if (!uids) break;
+
+            int n = cJSON_GetArraySize(uids);
+            ctx->folder_apps = malloc((size_t)n * sizeof(application_t *));
+            if (!ctx->folder_apps) break;
+
+            cJSON *uid_item;
+            cJSON_ArrayForEach(uid_item, uids) {
+                const char *uid = cJSON_GetStringValue(uid_item);
+                if (!uid) continue;
+                for (size_t i = 0; i < ctx->num_apps; i++) {
+                    if (strcmp(ctx->applications[i]->unique_identifier, uid) == 0) {
+                        ctx->folder_apps[ctx->folder_app_count++] = ctx->applications[i];
+                        break;
+                    }
+                }
+            }
+            break; /* found the folder */
+        }
+    }
+
+    ctx->current_folder = (char *)folder_name; /* points into items[].folder.name — stable lifetime, not owned, do not free */
+    ctx->selected_item  = 0;
+    ctx->scroll_offset  = 0;
+    ctx->total_items    = ctx->folder_app_count;
+}
+
+/* leave_folder — return from folder view to home screen */
+static void leave_folder(Launcher_Context *ctx) {
+    free(ctx->folder_apps);
+    ctx->folder_apps      = NULL;
+    ctx->folder_app_count = 0;
+    ctx->current_folder   = NULL;
+    ctx->selected_item    = ctx->saved_home_selected;
+    ctx->scroll_offset    = ctx->saved_home_scroll;
+    ctx->total_items      = ctx->item_count;
+}
+
 static void handle_keyboard(Launcher_Context *ctx, keyboard_scancode_t key_code) {
     if (ctx->show_about) {
         if (key_code == KEY_SCANCODE_ESCAPE || key_code == KEY_SCANCODE_RETURN || key_code == KEY_SCANCODE_SPACE) {
