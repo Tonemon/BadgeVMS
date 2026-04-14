@@ -386,7 +386,17 @@ static void handle_keyboard(Launcher_Context *ctx, keyboard_scancode_t key_code)
     }
 }
 
-static bool run_launcher(application_t **applications, size_t num) {
+static bool run_launcher(
+    window_handle_t window,
+    framebuffer_t  *framebuffer,
+    application_t **applications,
+    size_t          num
+) {
+    if (!window || !framebuffer) {
+        printf("run_launcher: null window or framebuffer\n");
+        return false;
+    }
+
     printf("Starting application launcher with %zu applications\n", num);
 
     Launcher_Context ctx = {0};
@@ -397,29 +407,9 @@ static bool run_launcher(application_t **applications, size_t num) {
     ctx.show_about       = false;
     ctx.quit             = false;
 
-    ctx.window = window_create(
-        "Application Launcher",
-        (window_size_t){SCREEN_WIDTH, SCREEN_HEIGHT},
-        WINDOW_FLAG_DOUBLE_BUFFERED | WINDOW_FLAG_FULLSCREEN | WINDOW_FLAG_LOW_PRIORITY
-    );
-
-    if (ctx.window == NULL) {
-        printf("Window could not be created\n");
-        return false;
-    }
-
-    ctx.framebuffer = window_framebuffer_create(
-        ctx.window,
-        (window_size_t){SCREEN_WIDTH, SCREEN_HEIGHT},
-        BADGEVMS_PIXELFORMAT_RGB565
-    );
-
-    if (ctx.framebuffer == NULL) {
-        printf("Framebuffer texture could not be created\n");
-        return false;
-    }
-
-    ctx.pixels = ctx.framebuffer->pixels;
+    ctx.window      = window;
+    ctx.framebuffer = framebuffer;
+    ctx.pixels      = framebuffer->pixels;
     event_t e;
 
     while (!ctx.quit) {
