@@ -358,9 +358,9 @@ build_app(thread_test PREINSTALL
      main.c
 )
 
-build_app(wifi_test PREINSTALL
+build_app(test_wifi PREINSTALL
     SOURCES
-     wifi_test.c
+     test_wifi.c
 )
 
 get_property(SDK_APP_ELFS GLOBAL PROPERTY SDK_APP_ELFS)
