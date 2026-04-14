@@ -148,6 +148,7 @@ build_app(badgevms_launcher PREINSTALL
     SOURCES
      main.c
      image.c
+     cJSON.c
 )
 
 build_app(badgevms_settings PREINSTALL
