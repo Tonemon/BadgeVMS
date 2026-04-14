@@ -496,8 +496,8 @@ static void build_item_list(Launcher_Context *ctx) {
         if (sz > 0) {
             char *buf = malloc((size_t)sz + 1);
             if (buf) {
-                fread(buf, 1, (size_t)sz, f);
-                buf[sz] = '\0';
+                size_t n = fread(buf, 1, (size_t)sz, f);
+                buf[n] = '\0';
                 root = cJSON_Parse(buf);
                 free(buf);
             }
