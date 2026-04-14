@@ -472,6 +472,135 @@ static void draw_boot_screen(
     draw_text_centered(ctx, 0, text_y, SCREEN_WIDTH, status, 0xAAAAAA);
 }
 
+/*
+ * build_item_list — parse folders.json and assemble ctx->items[].
+ *
+ * Home-screen layout:
+ *   [0 .. folder_start_index-1]  ITEM_APP  — apps not assigned to any folder
+ *   [folder_start_index .. item_count-1]  ITEM_FOLDER — non-empty folders
+ *
+ * If folders.json is missing or malformed, all apps appear as ITEM_APP rows
+ * and folder_start_index is set to -1.
+ */
+static void build_item_list(Launcher_Context *ctx) {
+    application_t **apps     = ctx->applications;
+    size_t          num_apps = ctx->num_apps;
+
+    /* --- Read and parse folders.json --- */
+    FILE *f = fopen("APPS:[badgevms_launcher]/folders.json", "r");
+    cJSON *root = NULL;
+    if (f) {
+        fseek(f, 0, SEEK_END);
+        long sz = ftell(f);
+        rewind(f);
+        if (sz > 0) {
+            char *buf = malloc((size_t)sz + 1);
+            if (buf) {
+                fread(buf, 1, (size_t)sz, f);
+                buf[sz] = '\0';
+                root = cJSON_Parse(buf);
+                free(buf);
+            }
+        }
+        fclose(f);
+    }
+    if (!root) {
+        printf("build_item_list: folders.json missing or invalid; all apps shown unassigned\n");
+    }
+    ctx->folders_json = root;
+
+    cJSON *folders_arr = root ? cJSON_GetObjectItem(root, "folders") : NULL;
+
+    /* --- Determine folder assignment per app (index into folders_arr) ---
+     * app_folder_name[i] points into the live cJSON string; NULL = unassigned. */
+    char const **app_folder_name = calloc(num_apps, sizeof(char *));
+    /* OOM: app_folder_name stays NULL → all apps treated as unassigned */
+
+    if (folders_arr && app_folder_name) {
+        cJSON *folder_obj;
+        cJSON_ArrayForEach(folder_obj, folders_arr) {
+            cJSON *fname = cJSON_GetObjectItem(folder_obj, "name");
+            cJSON *uids  = cJSON_GetObjectItem(folder_obj, "apps");
+            if (!fname || !uids) continue;
+            char const *folder_name = cJSON_GetStringValue(fname);
+
+            cJSON *uid_item;
+            cJSON_ArrayForEach(uid_item, uids) {
+                char const *uid = cJSON_GetStringValue(uid_item);
+                if (!uid) continue;
+                for (size_t i = 0; i < num_apps; i++) {
+                    if (strcmp(apps[i]->unique_identifier, uid) == 0) {
+                        app_folder_name[i] = folder_name;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    /* --- Allocate items array (worst case: all apps + all folder entries) --- */
+    int max_folders = folders_arr ? cJSON_GetArraySize(folders_arr) : 0;
+    ctx->items = malloc((num_apps + (size_t)max_folders) * sizeof(launcher_item_t));
+    if (!ctx->items) {
+        free(app_folder_name);
+        ctx->item_count          = 0;
+        ctx->folder_start_index  = -1;
+        ctx->total_items         = 0;
+        return;
+    }
+    ctx->item_count = 0;
+
+    /* --- Unassigned apps first --- */
+    for (size_t i = 0; i < num_apps; i++) {
+        if (!app_folder_name || !app_folder_name[i]) {
+            launcher_item_t *it = &ctx->items[ctx->item_count++];
+            it->type    = ITEM_APP;
+            it->app     = apps[i];
+        }
+    }
+
+    /* --- Record where folder rows start --- */
+    ctx->folder_start_index = ctx->item_count; /* tentative */
+
+    /* --- Folder rows (non-empty folders only) --- */
+    if (folders_arr) {
+        cJSON *folder_obj;
+        cJSON_ArrayForEach(folder_obj, folders_arr) {
+            cJSON *fname = cJSON_GetObjectItem(folder_obj, "name");
+            cJSON *uids  = cJSON_GetObjectItem(folder_obj, "apps");
+            if (!fname || !uids) continue;
+            char const *folder_name = cJSON_GetStringValue(fname);
+
+            int installed = 0;
+            for (size_t i = 0; i < num_apps; i++) {
+                if (app_folder_name && app_folder_name[i] &&
+                    strcmp(app_folder_name[i], folder_name) == 0) {
+                    installed++;
+                }
+            }
+            if (installed == 0) continue; /* hidden: no apps installed */
+
+            launcher_item_t *it = &ctx->items[ctx->item_count++];
+            it->type = ITEM_FOLDER;
+            strncpy(it->folder.name, folder_name, sizeof(it->folder.name) - 1);
+            it->folder.name[sizeof(it->folder.name) - 1] = '\0';
+            it->folder.app_count = installed;
+        }
+    }
+
+    free(app_folder_name);
+
+    /* If no folders were added, clear the marker */
+    if (ctx->folder_start_index == ctx->item_count) {
+        ctx->folder_start_index = -1;
+    }
+
+    ctx->total_items = ctx->item_count;
+    printf("build_item_list: %d home items (%d folders)\n",
+           ctx->item_count,
+           ctx->folder_start_index >= 0 ? ctx->item_count - ctx->folder_start_index : 0);
+}
+
 static bool run_launcher(
     window_handle_t window,
     framebuffer_t  *framebuffer,
@@ -487,15 +616,21 @@ static bool run_launcher(
 
     Launcher_Context ctx = {0};
     ctx.applications     = applications;
-    ctx.total_items      = num;
+    ctx.num_apps         = num;
     ctx.selected_item    = 0;
     ctx.scroll_offset    = 0;
     ctx.show_about       = false;
     ctx.quit             = false;
+    ctx.folder_start_index = -1;
+    ctx.current_folder   = NULL;
+    ctx.folders_json     = NULL;
+    ctx.items            = NULL;
 
     ctx.window      = window;
     ctx.framebuffer = framebuffer;
     ctx.pixels      = framebuffer->pixels;
+
+    build_item_list(&ctx);
     event_t e;
 
     while (!ctx.quit) {
@@ -516,6 +651,10 @@ static bool run_launcher(
             handle_keyboard(&ctx, e.keyboard.scancode);
         }
     }
+
+    free(ctx.items);
+    free(ctx.folder_apps);
+    cJSON_Delete(ctx.folders_json);
 
     return true;
 }
