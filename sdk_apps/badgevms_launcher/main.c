@@ -15,6 +15,7 @@
 #include <time.h>
 #include <unistd.h>
 #include "stb_image.h"
+#include "cJSON.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -33,6 +34,24 @@
 #define CDE_BUTTON_COLOR  0xD4D0C8
 #define CDE_TITLE_BG      0x808080
 #define CDE_INACTIVE_TEXT 0x808080
+
+/* ---- Folder support types ---- */
+
+typedef enum {
+    ITEM_APP,
+    ITEM_FOLDER,
+} launcher_item_type_t;
+
+typedef struct {
+    launcher_item_type_t type;
+    union {
+        application_t *app;          /* type == ITEM_APP    */
+        struct {
+            char name[64];           /* folder display name */
+            int  app_count;          /* installed apps in this folder */
+        } folder;                    /* type == ITEM_FOLDER */
+    };
+} launcher_item_t;
 
 /* --- Boot screen scan thread state --- */
 static atomic_bool     g_scan_done  = false;
@@ -84,13 +103,29 @@ typedef struct {
     window_handle_t window;
     framebuffer_t  *framebuffer;
     uint16_t       *pixels;
+    /* Full scanned app list (owned by scan_thread's list handle) */
     application_t **applications;
+    size_t          num_apps;
+    /* Current-view navigation */
     int             scroll_offset;
     int             selected_item;
-    int             total_items;
+    int             total_items;      /* length of the active list */
     int             items_per_page;
     bool            show_about;
     bool            quit;
+    /* Home-screen item list */
+    launcher_item_t *items;
+    int              item_count;
+    int              folder_start_index; /* index in items[] where folder rows begin; -1 if none */
+    /* Folder view state */
+    char            *current_folder;     /* NULL = home; pointer into items[i].folder.name */
+    application_t  **folder_apps;
+    int              folder_app_count;
+    /* Saved home navigation for restore on leave */
+    int              saved_home_selected;
+    int              saved_home_scroll;
+    /* Parsed folders.json kept alive for folder lookups */
+    cJSON           *folders_json;
 } Launcher_Context;
 
 static inline uint16_t rgb888_to_rgb565_color(uint32_t rgb888) {
