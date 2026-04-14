@@ -58,6 +58,40 @@ firmware/
 
 Dual OTA partitions allow safe over-the-air updates; the init system marks the partition valid after successful boot.
 
+## Build Environment Setup
+
+The ESP-IDF toolchain is installed at `~/esp/esp-idf` but is **not on the default PATH**. Before running any `idf.py` command in a fresh shell, source the export script:
+
+```bash
+. $HOME/esp/esp-idf/export.sh
+```
+
+This adds `idf.py`, the RISC-V GCC cross-compiler, and all ESP-IDF Python tools to your session. You only need to do this once per shell session.
+
+## Building SDK Apps Without Full Firmware Rebuild
+
+The full `idf.py build` compiles the ESP32P4 firmware, the ESP32C6 WiFi slave firmware, all SDK libraries, and all SDK apps in one shot. If Espressif-side components have build errors (e.g. `hal/efuse_ll.h` referencing removed struct members after an IDF update), the full build will fail before reaching the SDK apps.
+
+Since SDK apps are compiled as independent RISC-V ELF shared libraries with their own compiler flags, they can be built in isolation via ninja without touching the main firmware:
+
+```bash
+ninja -C /path/to/firmware/build \
+  /path/to/firmware/build/sdk_apps/CMakeFiles/build_app_<appname>
+```
+
+For example, to build just `badgevms_launcher`:
+
+```bash
+ninja -C ~/Git/firmware/build \
+  ~/Git/firmware/build/sdk_apps/CMakeFiles/build_app_badgevms_launcher
+```
+
+**When to use this:** Any time you are iterating on an SDK app and the full `idf.py build` fails due to errors in Espressif components that are unrelated to your changes. The ninja target builds only the app and its SDK library dependencies.
+
+**Prerequisite:** The build directory must have been configured at least once with `idf.py build` (even if it failed partway). If the build directory is missing or corrupted, run `idf.py build` once to regenerate the CMake/ninja files before using the targeted ninja command.
+
+**Warning:** Do not run `cmake` directly in the build directory — the project uses the Ninja generator, and invoking cmake with a different generator (e.g. Unix Makefiles) will corrupt the build directory state.
+
 ## Path Conventions
 
 BadgeVMS uses **VMS-style paths**, NOT Unix paths:
