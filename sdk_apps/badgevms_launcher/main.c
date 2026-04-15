@@ -230,6 +230,21 @@ static void draw_button(Launcher_Context *ctx, int x, int y, int w, int h, char 
     draw_text_centered(ctx, x, text_y, w, text, CDE_TEXT_COLOR);
 }
 
+/* Draw "vX.Y - Author" subtitle for an app row. Handles missing version/author. */
+static void draw_app_subtitle(Launcher_Context *ctx, int x, int y,
+                              application_t const *app, uint32_t color) {
+    char sub[96];
+    if (app->version && app->author)
+        snprintf(sub, sizeof(sub), "v%s - %s", app->version, app->author);
+    else if (app->version)
+        snprintf(sub, sizeof(sub), "v%s", app->version);
+    else if (app->author)
+        snprintf(sub, sizeof(sub), "%s", app->author);
+    else
+        return;
+    draw_text(ctx, x, y, sub, color);
+}
+
 static void draw_about_dialog(Launcher_Context *ctx) {
     int dialog_w = 450;
     int dialog_h = 350;
@@ -274,23 +289,28 @@ static void draw_launcher_window(Launcher_Context *ctx) {
     int title_h = 45;
     draw_rect(ctx, window_x + 3, window_y + 3, window_w - 6, title_h, CDE_TITLE_BG);
 
-    char title[128];
+    int title_x = window_x + 15;
+    int title_y = window_y + 11;
     if (ctx->current_folder) {
+        char title[128];
         snprintf(title, sizeof(title), "WHY Application Launcher > %s", ctx->current_folder);
+        draw_text_bold(ctx, title_x, title_y, title, CDE_SELECTED_TEXT);
     } else {
         int folder_count = (ctx->folder_start_index >= 0)
             ? (ctx->item_count - ctx->folder_start_index) : 0;
         int app_count = (ctx->folder_start_index >= 0)
             ? ctx->folder_start_index : ctx->item_count;
+        draw_text_bold(ctx, title_x, title_y, "WHY Application Launcher", CDE_SELECTED_TEXT);
         if (folder_count > 0) {
-            snprintf(title, sizeof(title),
-                     "WHY Application Launcher . %d apps, %d folder%s",
+            int lw = get_text_width("WHY Application Launcher");
+            /* bullet • — drawn as a 5×5 filled rect (font doesn't cover U+2022) */
+            draw_rect(ctx, title_x + lw + 8, title_y + (FONT_HEIGHT - 5) / 2, 5, 5, CDE_SELECTED_TEXT);
+            char right[64];
+            snprintf(right, sizeof(right), "%d apps, %d folder%s",
                      app_count, folder_count, folder_count == 1 ? "" : "s");
-        } else {
-            snprintf(title, sizeof(title), "WHY Application Launcher");
+            draw_text_bold(ctx, title_x + lw + 20, title_y, right, CDE_SELECTED_TEXT);
         }
     }
-    draw_text_bold(ctx, window_x + 15, window_y + 11, title, CDE_SELECTED_TEXT);
 
     /* --- Item list area --- */
     int list_y      = window_y + title_h + 15;
@@ -342,21 +362,13 @@ static void draw_launcher_window(Launcher_Context *ctx) {
             /* Folder view: always rendering an app */
             application_t *app = ctx->folder_apps[i];
             draw_text_bold(ctx, text_x, item_y + 10, app->name, text_color);
-            if (app->version) {
-                char version_text[64];
-                snprintf(version_text, sizeof(version_text), "v%s", app->version);
-                draw_text(ctx, text_x, item_y + 35, version_text, text_color);
-            }
+            draw_app_subtitle(ctx, text_x, item_y + 35, app, text_color);
         } else {
             /* Home view: ITEM_APP or ITEM_FOLDER */
             launcher_item_t *item = &ctx->items[i];
             if (item->type == ITEM_APP) {
                 draw_text_bold(ctx, text_x, item_y + 10, item->app->name, text_color);
-                if (item->app->version) {
-                    char version_text[64];
-                    snprintf(version_text, sizeof(version_text), "v%s", item->app->version);
-                    draw_text(ctx, text_x, item_y + 35, version_text, text_color);
-                }
+                draw_app_subtitle(ctx, text_x, item_y + 35, item->app, text_color);
             } else {
                 /* Folder row: draw "[F]" inside icon box, show app count as subtitle */
                 draw_text_bold(ctx, icon_x + 14, icon_y + 16, "[F]", text_color);
