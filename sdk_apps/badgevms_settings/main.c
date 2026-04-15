@@ -5,9 +5,11 @@
 #include <stdlib.h>
 
 #include <badgevms/wifi.h>
+#include <badgevms/application.h>
 #include <SDL3/SDL.h>
 #include <string.h>
 #include <time.h>
+#include "cJSON.h"
 
 #define SCREEN_WIDTH  720
 #define SCREEN_HEIGHT 720
@@ -25,7 +27,7 @@
 #define CDE_SUCCESS_COLOR 0x00A000
 #define CDE_ERROR_COLOR   0xA00000
 
-typedef enum { SCREEN_MAIN, SCREEN_WIFI, SCREEN_DISPLAY, SCREEN_SYSTEM, SCREEN_ABOUT } ScreenState;
+typedef enum { SCREEN_MAIN, SCREEN_WIFI, SCREEN_DISPLAY, SCREEN_SYSTEM, SCREEN_ABOUT, SCREEN_REORDER } ScreenState;
 
 #define NAV_STACK_MAX 8
 
@@ -34,6 +36,27 @@ typedef struct {
     int         selected_item;
     int         scroll_offset;
 } NavEntry;
+
+typedef enum {
+    DIALOG_NONE,
+    DIALOG_NEW_FOLDER,
+    DIALOG_RENAME,
+    DIALOG_DELETE_CONFIRM,
+} reorder_dialog_type_t;
+
+typedef struct {
+    bool   is_folder;
+    char   uid[64];           /* app uid (is_folder == false) */
+    char   display_name[64];  /* app name or folder display name */
+    char **folder_apps;       /* ordered uid list (is_folder == true) */
+    int    folder_app_count;
+    int    folder_app_cap;
+} reorder_item_t;
+
+typedef struct {
+    char uid[64];
+    char name[64];
+} app_name_entry_t;
 
 typedef struct {
     char ssid[64];
@@ -73,6 +96,27 @@ typedef struct {
 
     NavEntry nav_stack[NAV_STACK_MAX];
     int      nav_depth;
+
+    /* Reorder screen working state */
+    reorder_item_t       *reorder_items;
+    int                   reorder_item_count;
+    int                   reorder_item_cap;
+    int                   reorder_selected;
+    int                   reorder_scroll;
+    int                   reorder_items_per_page;
+    int                   reorder_held;          /* index of held app, -1 = none */
+    int                   reorder_held_origin;   /* index before grab (for ESC cancel) */
+    bool                  reorder_in_folder;
+    int                   reorder_folder_idx;    /* index in reorder_items[] of open folder */
+    int                   reorder_folder_sel;
+    int                   reorder_folder_scroll;
+    reorder_dialog_type_t reorder_dialog_type;
+    char                  reorder_dialog_buf[64];
+    int                   reorder_dialog_cursor;
+    int                   reorder_rename_idx;    /* folder index for rename/delete dialogs */
+    /* uid→name lookup built during reorder_init */
+    app_name_entry_t     *app_name_table;
+    int                   app_name_count;
 } app_context;
 
 static void render_screen(app_context *ctx);
