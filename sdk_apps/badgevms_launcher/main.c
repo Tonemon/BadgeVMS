@@ -443,11 +443,15 @@ static void leave_folder(Launcher_Context *ctx) {
 
 static void handle_keyboard(Launcher_Context *ctx, keyboard_scancode_t key_code) {
     if (ctx->show_about) {
-        if (key_code == KEY_SCANCODE_ESCAPE || key_code == KEY_SCANCODE_RETURN || key_code == KEY_SCANCODE_SPACE) {
+        if (key_code == KEY_SCANCODE_ESCAPE || key_code == KEY_SCANCODE_RETURN ||
+            key_code == KEY_SCANCODE_SPACE) {
             ctx->show_about = false;
         }
         return;
     }
+
+    /* Total items in the currently active list */
+    int total = ctx->total_items;
 
     switch (key_code) {
         case KEY_SCANCODE_UP:
@@ -460,7 +464,7 @@ static void handle_keyboard(Launcher_Context *ctx, keyboard_scancode_t key_code)
             break;
 
         case KEY_SCANCODE_DOWN:
-            if (ctx->selected_item < ctx->total_items - 1) {
+            if (ctx->selected_item < total - 1) {
                 ctx->selected_item++;
                 if (ctx->selected_item >= ctx->scroll_offset + ctx->items_per_page) {
                     ctx->scroll_offset = ctx->selected_item - ctx->items_per_page + 1;
@@ -470,15 +474,40 @@ static void handle_keyboard(Launcher_Context *ctx, keyboard_scancode_t key_code)
 
         case KEY_SCANCODE_RETURN:
         case KEY_SCANCODE_SPACE:
-            printf("Launching: %s\n", ctx->applications[ctx->selected_item]->name);
-            application_launch(ctx->applications[ctx->selected_item]->unique_identifier);
+            if (ctx->current_folder) {
+                /* Folder view — launch selected app */
+                if (ctx->folder_app_count > 0) {
+                    printf("Launching: %s\n",
+                           ctx->folder_apps[ctx->selected_item]->name);
+                    application_launch(
+                        ctx->folder_apps[ctx->selected_item]->unique_identifier);
+                }
+            } else {
+                /* Home view — open folder or launch app */
+                if (ctx->item_count > 0) {
+                    launcher_item_t *item = &ctx->items[ctx->selected_item];
+                    if (item->type == ITEM_FOLDER) {
+                        enter_folder(ctx, item->folder.name);
+                    } else {
+                        printf("Launching: %s\n", item->app->name);
+                        application_launch(item->app->unique_identifier);
+                    }
+                }
+            }
             break;
 
-        case KEY_SCANCODE_A: ctx->show_about = true; break;
+        case KEY_SCANCODE_A:
+            ctx->show_about = true;
+            break;
 
-        case KEY_SCANCODE_ESCAPE: {
-            ctx->quit = true;
-        } break;
+        case KEY_SCANCODE_DELETE:
+        case KEY_SCANCODE_ESCAPE:
+            if (ctx->current_folder) {
+                leave_folder(ctx);
+            } else {
+                ctx->quit = true;
+            }
+            break;
     }
 }
 
