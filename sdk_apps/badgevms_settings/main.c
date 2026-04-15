@@ -224,7 +224,7 @@ static void populate_wifi_networks(app_context *ctx) {
 }
 
 static void nav_push(app_context *ctx, ScreenState screen) {
-    if (ctx->nav_depth < NAV_STACK_MAX - 1) {
+    if (ctx->nav_depth < NAV_STACK_MAX) {
         ctx->nav_stack[ctx->nav_depth].screen        = ctx->current_screen;
         ctx->nav_stack[ctx->nav_depth].selected_item = ctx->selected_item;
         ctx->nav_stack[ctx->nav_depth].scroll_offset = ctx->scroll_offset;
