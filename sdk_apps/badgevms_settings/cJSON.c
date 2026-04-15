@@ -69,15 +69,13 @@
 #endif
 #define false ((cJSON_bool)0)
 
-/* define isnan and isinf for ANSI C, if in C99 or above, isnan and isinf has been defined in math.h */
-/* BadgeVMS: (d != d) compiles to __unorddf2 which is not in the runtime.
- * We never serialize floating-point JSON values so always-false is safe here. */
-#ifndef isinf
+/* BadgeVMS: __unorddf2 is not exported by the runtime. math.h defines isnan/isinf
+ * via __builtin_isnan/__builtin_isinf which emit __unorddf2 calls. We never serialize
+ * floating-point JSON values so always-false is safe. Use #undef to override math.h. */
+#undef isinf
 #define isinf(d) (0)
-#endif
-#ifndef isnan
+#undef isnan
 #define isnan(d) (0)
-#endif
 
 #ifndef NAN
 #ifdef _WIN32
