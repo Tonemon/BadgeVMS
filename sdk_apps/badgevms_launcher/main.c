@@ -267,117 +267,141 @@ static void draw_launcher_window(Launcher_Context *ctx) {
     int window_h = SCREEN_HEIGHT - 60;
 
     draw_rect(ctx, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, CDE_BG_COLOR);
-
     draw_rect(ctx, window_x, window_y, window_w, window_h, CDE_PANEL_COLOR);
     draw_3d_border(ctx, window_x, window_y, window_w, window_h, 0);
 
+    /* --- Title bar --- */
     int title_h = 45;
     draw_rect(ctx, window_x + 3, window_y + 3, window_w - 6, title_h, CDE_TITLE_BG);
-    draw_text_bold(ctx, window_x + 15, window_y + 11, "WHY Application Launcher", CDE_SELECTED_TEXT);
 
-    char count_text[64];
-    if (ctx->total_items == 1) {
-        snprintf(count_text, sizeof(count_text), "1 Application Available");
+    char title[128];
+    if (ctx->current_folder) {
+        snprintf(title, sizeof(title), "WHY Application Launcher > %s", ctx->current_folder);
     } else {
-        snprintf(count_text, sizeof(count_text), "%d Applications Available", ctx->total_items);
+        int folder_count = (ctx->folder_start_index >= 0)
+            ? (ctx->item_count - ctx->folder_start_index) : 0;
+        int app_count = (ctx->folder_start_index >= 0)
+            ? ctx->folder_start_index : ctx->item_count;
+        if (folder_count > 0) {
+            snprintf(title, sizeof(title),
+                     "WHY Application Launcher . %d apps, %d folder%s",
+                     app_count, folder_count, folder_count == 1 ? "" : "s");
+        } else {
+            snprintf(title, sizeof(title), "WHY Application Launcher");
+        }
     }
-    draw_text(ctx, window_x + 15, window_y + title_h + 20, count_text, CDE_TEXT_COLOR);
+    draw_text_bold(ctx, window_x + 15, window_y + 11, title, CDE_SELECTED_TEXT);
 
-    int list_y      = window_y + title_h + 55;
-    int list_h      = window_h - title_h - 110;
+    /* --- Item list area --- */
+    int list_y      = window_y + title_h + 15;
+    int list_h      = window_h - title_h - 70;
     int item_height = 80;
 
     draw_rect(ctx, window_x + 15, list_y, window_w - 30, list_h, 0xFFFFFF);
     draw_3d_border(ctx, window_x + 15, list_y, window_w - 30, list_h, 1);
 
     ctx->items_per_page = (list_h - 6) / item_height;
-    int visible_start   = ctx->scroll_offset;
-    int visible_end     = visible_start + ctx->items_per_page;
-    if (visible_end > ctx->total_items)
-        visible_end = ctx->total_items;
+
+    /* Determine which list we're rendering */
+    int total = ctx->total_items;
+    int visible_start = ctx->scroll_offset;
+    int visible_end   = visible_start + ctx->items_per_page;
+    if (visible_end > total) visible_end = total;
 
     for (int i = visible_start; i < visible_end; i++) {
         int item_y = list_y + 3 + (i - visible_start) * item_height;
         int item_x = window_x + 18;
         int item_w = window_w - 36;
 
-        if (i == ctx->selected_item) {
-            draw_rect(ctx, item_x, item_y, item_w, item_height - 2, CDE_SELECTED_BG);
+        /* Draw divider between last home app and first folder row */
+        if (!ctx->current_folder &&
+            ctx->folder_start_index > 0 &&
+            i == ctx->folder_start_index) {
+            int div_y = item_y - 2;
+            draw_rect(ctx, item_x, div_y,     item_w, 1, CDE_BORDER_DARK);
+            draw_rect(ctx, item_x, div_y + 1, item_w, 1, CDE_BORDER_LIGHT);
         }
 
-        uint32_t text_color = (i == ctx->selected_item) ? CDE_SELECTED_TEXT : CDE_TEXT_COLOR;
+        bool selected = (i == ctx->selected_item);
+        if (selected) {
+            draw_rect(ctx, item_x, item_y, item_w, item_height - 2, CDE_SELECTED_BG);
+        }
+        uint32_t text_color = selected ? CDE_SELECTED_TEXT : CDE_TEXT_COLOR;
 
         int icon_size = 48;
         int icon_x    = item_x + 10;
         int icon_y    = item_y + (item_height - icon_size) / 2;
 
-        uint32_t icon_color = (i == ctx->selected_item) ? CDE_SELECTED_TEXT : CDE_BUTTON_COLOR;
+        uint32_t icon_color = selected ? CDE_SELECTED_TEXT : CDE_BUTTON_COLOR;
         draw_rect(ctx, icon_x, icon_y, icon_size, icon_size, icon_color);
         draw_3d_border(ctx, icon_x, icon_y, icon_size, icon_size, 1);
 
         int text_x = icon_x + icon_size + 15;
-        draw_text_bold(ctx, text_x, item_y + 10, ctx->applications[i]->name, text_color);
 
-        if (ctx->applications[i]->version) {
-            char version_text[64];
-            snprintf(version_text, sizeof(version_text), "v%s", ctx->applications[i]->version);
-            draw_text(ctx, text_x, item_y + 35, version_text, text_color);
-        }
-
-#if 0
-        if (ctx->applications[i].description) {
-            char desc[60] = {0};
-            int max_desc_chars = ((item_w - text_x + item_x - 16) / FONT_WIDTH);
-            if (max_desc_chars > 59) max_desc_chars = 59;
-            
-            strncpy(desc, ctx->applications[i].description, max_desc_chars);
-            desc[max_desc_chars] = '\0';
-            
-            if (strlen(ctx->applications[i].description) > max_desc_chars) {
-                desc[max_desc_chars - 3] = '.';
-                desc[max_desc_chars - 2] = '.';
-                desc[max_desc_chars - 1] = '.';
+        if (ctx->current_folder) {
+            /* Folder view: always rendering an app */
+            application_t *app = ctx->folder_apps[i];
+            draw_text_bold(ctx, text_x, item_y + 10, app->name, text_color);
+            if (app->version) {
+                char version_text[64];
+                snprintf(version_text, sizeof(version_text), "v%s", app->version);
+                draw_text(ctx, text_x, item_y + 35, version_text, text_color);
             }
-            draw_text(ctx, text_x, item_y + 58, desc, text_color);
+        } else {
+            /* Home view: ITEM_APP or ITEM_FOLDER */
+            launcher_item_t *item = &ctx->items[i];
+            if (item->type == ITEM_APP) {
+                draw_text_bold(ctx, text_x, item_y + 10, item->app->name, text_color);
+                if (item->app->version) {
+                    char version_text[64];
+                    snprintf(version_text, sizeof(version_text), "v%s", item->app->version);
+                    draw_text(ctx, text_x, item_y + 35, version_text, text_color);
+                }
+            } else {
+                /* Folder row: draw "[F]" inside icon box, show app count as subtitle */
+                draw_text_bold(ctx, icon_x + 14, icon_y + 16, "[F]", text_color);
+                draw_text_bold(ctx, text_x, item_y + 10, item->folder.name, text_color);
+                char sub[48];
+                snprintf(sub, sizeof(sub), "%d app%s installed",
+                         item->folder.app_count,
+                         item->folder.app_count == 1 ? "" : "s");
+                draw_text(ctx, text_x, item_y + 35, sub,
+                          selected ? CDE_SELECTED_TEXT : CDE_INACTIVE_TEXT);
+            }
         }
-#endif
 
         if (i < visible_end - 1) {
             draw_rect(ctx, item_x, item_y + item_height - 2, item_w, 1, CDE_BORDER_DARK);
         }
     }
 
-    if (ctx->total_items > ctx->items_per_page) {
+    /* --- Scrollbar --- */
+    if (total > ctx->items_per_page) {
         int scrollbar_x = window_x + window_w - 35;
         int scrollbar_y = list_y + 3;
         int scrollbar_h = list_h - 6;
-
         draw_rect(ctx, scrollbar_x, scrollbar_y, 20, scrollbar_h, CDE_BUTTON_COLOR);
         draw_3d_border(ctx, scrollbar_x, scrollbar_y, 20, scrollbar_h, 1);
 
-        int thumb_h = (scrollbar_h * ctx->items_per_page) / ctx->total_items;
-        if (thumb_h < 30)
-            thumb_h = 30;
-
+        int thumb_h = (scrollbar_h * ctx->items_per_page) / total;
+        if (thumb_h < 30) thumb_h = 30;
         int thumb_y = scrollbar_y;
-        if (ctx->total_items > ctx->items_per_page) {
-            thumb_y += ((scrollbar_h - thumb_h) * ctx->scroll_offset) / (ctx->total_items - ctx->items_per_page);
+        if (total > ctx->items_per_page) {
+            thumb_y += ((scrollbar_h - thumb_h) * ctx->scroll_offset) /
+                       (total - ctx->items_per_page);
         }
-
         draw_rect(ctx, scrollbar_x + 3, thumb_y, 14, thumb_h, CDE_PANEL_COLOR);
         draw_3d_border(ctx, scrollbar_x + 3, thumb_y, 14, thumb_h, 0);
     }
 
+    /* --- Footer hint --- */
     draw_rect(ctx, window_x + 3, window_y + window_h - 42, window_w - 6, 39, CDE_BUTTON_COLOR);
     draw_3d_border(ctx, window_x + 3, window_y + window_h - 42, window_w - 6, 39, 1);
 
-    draw_text(
-        ctx,
-        window_x + 15,
-        window_y + window_h - 35,
-        "UP/DOWN: Navigate  ENTER: Launch  A: About  ESC: Exit",
-        CDE_TEXT_COLOR
-    );
+    char const *hint = ctx->current_folder
+        ? "UP/DOWN: Navigate  ENTER: Launch  A: About  ESC/DEL: Back"
+        : "UP/DOWN: Navigate  ENTER: Open  A: About  ESC: Exit";
+    draw_text(ctx, window_x + 15, window_y + window_h - 35, hint, CDE_TEXT_COLOR);
 }
 
 /* enter_folder — switch from home view into a named folder's app list */
