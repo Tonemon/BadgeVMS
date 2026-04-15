@@ -302,6 +302,10 @@ static void draw_launcher_window(Launcher_Context *ctx) {
             ? (ctx->item_count - ctx->folder_start_index) : 0;
         int app_count = (ctx->folder_start_index >= 0)
             ? ctx->folder_start_index : ctx->item_count;
+        for (int fi = ctx->folder_start_index >= 0 ? ctx->folder_start_index : 0;
+             fi < ctx->item_count; fi++) {
+            app_count += ctx->items[fi].folder.app_count;
+        }
         draw_text_bold(ctx, title_x, title_y, "WHY Application Launcher", CDE_SELECTED_TEXT);
         if (folder_count > 0) {
             int lw = get_text_width("WHY Application Launcher");
@@ -378,7 +382,7 @@ static void draw_launcher_window(Launcher_Context *ctx) {
                 draw_text_bold(ctx, icon_x + 14, icon_y + 16, "[F]", text_color);
                 draw_text_bold(ctx, text_x, item_y + 10, item->folder.name, text_color);
                 char sub[48];
-                snprintf(sub, sizeof(sub), "%d app%s installed",
+                snprintf(sub, sizeof(sub), "%d app%s",
                          item->folder.app_count,
                          item->folder.app_count == 1 ? "" : "s");
                 draw_text(ctx, text_x, item_y + 35, sub,
