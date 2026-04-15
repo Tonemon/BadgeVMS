@@ -262,7 +262,9 @@ static void draw_about_dialog(Launcher_Context *ctx) {
 
     int content_y = dialog_y + title_h + 30;
     draw_text_centered(ctx, dialog_x, content_y, dialog_w, "BadgeVMS", CDE_TEXT_COLOR);
-    draw_text_centered(ctx, dialog_x, content_y + 30, dialog_w, "Version 1.0", CDE_TEXT_COLOR);
+    char version_str[32];
+    snprintf(version_str, sizeof(version_str), "Version %d", BADGEVMS_VERSION);
+    draw_text_centered(ctx, dialog_x, content_y + 30, dialog_w, version_str, CDE_TEXT_COLOR);
     draw_text_centered(
         ctx,
         dialog_x,
@@ -362,13 +364,15 @@ static void draw_launcher_window(Launcher_Context *ctx) {
             /* Folder view: always rendering an app */
             application_t *app = ctx->folder_apps[i];
             draw_text_bold(ctx, text_x, item_y + 10, app->name, text_color);
-            draw_app_subtitle(ctx, text_x, item_y + 35, app, text_color);
+            draw_app_subtitle(ctx, text_x, item_y + 35, app,
+                              selected ? CDE_SELECTED_TEXT : CDE_INACTIVE_TEXT);
         } else {
             /* Home view: ITEM_APP or ITEM_FOLDER */
             launcher_item_t *item = &ctx->items[i];
             if (item->type == ITEM_APP) {
                 draw_text_bold(ctx, text_x, item_y + 10, item->app->name, text_color);
-                draw_app_subtitle(ctx, text_x, item_y + 35, item->app, text_color);
+                draw_app_subtitle(ctx, text_x, item_y + 35, item->app,
+                                  selected ? CDE_SELECTED_TEXT : CDE_INACTIVE_TEXT);
             } else {
                 /* Folder row: draw "[F]" inside icon box, show app count as subtitle */
                 draw_text_bold(ctx, icon_x + 14, icon_y + 16, "[F]", text_color);
