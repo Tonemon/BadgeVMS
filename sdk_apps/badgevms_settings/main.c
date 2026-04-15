@@ -292,6 +292,241 @@ static void nav_pop(app_context *ctx) {
     }
 }
 
+/* Grow reorder_items by one and return a pointer to the new zeroed entry. */
+static reorder_item_t *reorder_append(app_context *ctx) {
+    if (ctx->reorder_item_count >= ctx->reorder_item_cap) {
+        int new_cap = ctx->reorder_item_cap == 0 ? 16 : ctx->reorder_item_cap * 2;
+        reorder_item_t *tmp = realloc(ctx->reorder_items,
+                                      (size_t)new_cap * sizeof(reorder_item_t));
+        if (!tmp) return NULL;
+        ctx->reorder_items    = tmp;
+        ctx->reorder_item_cap = new_cap;
+    }
+    reorder_item_t *it = &ctx->reorder_items[ctx->reorder_item_count++];
+    memset(it, 0, sizeof(*it));
+    return it;
+}
+
+/* Append a uid string to a folder's folder_apps list. */
+static void reorder_folder_append(reorder_item_t *folder, const char *uid) {
+    if (folder->folder_app_count >= folder->folder_app_cap) {
+        int new_cap = folder->folder_app_cap == 0 ? 8 : folder->folder_app_cap * 2;
+        char **tmp = realloc(folder->folder_apps, (size_t)new_cap * sizeof(char *));
+        if (!tmp) return;
+        folder->folder_apps    = tmp;
+        folder->folder_app_cap = new_cap;
+    }
+    char *dup = malloc(64);
+    if (!dup) return;
+    strncpy(dup, uid, 63);
+    dup[63] = '\0';
+    folder->folder_apps[folder->folder_app_count++] = dup;
+}
+
+static void reorder_free(app_context *ctx) {
+    if (ctx->reorder_items) {
+        for (int i = 0; i < ctx->reorder_item_count; i++) {
+            reorder_item_t *it = &ctx->reorder_items[i];
+            if (it->is_folder) {
+                for (int j = 0; j < it->folder_app_count; j++)
+                    free(it->folder_apps[j]);
+                free(it->folder_apps);
+            }
+        }
+        free(ctx->reorder_items);
+        ctx->reorder_items      = NULL;
+        ctx->reorder_item_count = 0;
+        ctx->reorder_item_cap   = 0;
+    }
+    free(ctx->app_name_table);
+    ctx->app_name_table  = NULL;
+    ctx->app_name_count  = 0;
+    ctx->reorder_held    = -1;
+    ctx->reorder_in_folder = false;
+    ctx->reorder_dialog_type = DIALOG_NONE;
+}
+
+static void reorder_save(app_context *ctx) {
+    cJSON *root  = cJSON_CreateObject();
+    cJSON *items = cJSON_CreateArray();
+    for (int i = 0; i < ctx->reorder_item_count; i++) {
+        reorder_item_t *it  = &ctx->reorder_items[i];
+        cJSON          *obj = cJSON_CreateObject();
+        if (!it->is_folder) {
+            cJSON_AddStringToObject(obj, "type", "app");
+            cJSON_AddStringToObject(obj, "uid",  it->uid);
+        } else {
+            cJSON_AddStringToObject(obj, "type", "folder");
+            cJSON_AddStringToObject(obj, "name", it->display_name);
+            cJSON *apps_arr = cJSON_CreateArray();
+            for (int j = 0; j < it->folder_app_count; j++)
+                cJSON_AddItemToArray(apps_arr, cJSON_CreateString(it->folder_apps[j]));
+            cJSON_AddItemToObject(obj, "apps", apps_arr);
+        }
+        cJSON_AddItemToArray(items, obj);
+    }
+    cJSON_AddItemToObject(root, "items", items);
+    char *json_str = cJSON_Print(root);
+    cJSON_Delete(root);
+    if (json_str) {
+        FILE *f = fopen("APPS:[badgevms_launcher]apps.json", "w");
+        if (f) { fputs(json_str, f); fclose(f); }
+        free(json_str);
+    }
+}
+
+static void reorder_init(app_context *ctx) {
+    reorder_free(ctx);   /* clear any leftover state */
+
+    ctx->reorder_selected      = 0;
+    ctx->reorder_scroll        = 0;
+    ctx->reorder_held          = -1;
+    ctx->reorder_held_origin   = -1;
+    ctx->reorder_in_folder     = false;
+    ctx->reorder_folder_idx    = -1;
+    ctx->reorder_folder_sel    = 0;
+    ctx->reorder_folder_scroll = 0;
+    ctx->reorder_dialog_type   = DIALOG_NONE;
+
+    /* Build uid→name lookup from installed apps.
+     * Skip badgevms_launcher and why2025_firmware_ota_c6 — they are never shown
+     * in the reorder screen and must not end up in apps.json. */
+    static const char * const SKIP_UIDS[] = {
+        "badgevms_launcher", "why2025_firmware_ota_c6", NULL
+    };
+    application_t          *app;
+    application_list_handle handle = application_list(&app);
+    while (app) {
+        /* Filter out system UIDs that should never appear in the reorder list */
+        bool skip = false;
+        for (int si = 0; SKIP_UIDS[si]; si++) {
+            if (strcmp(app->unique_identifier, SKIP_UIDS[si]) == 0) { skip = true; break; }
+        }
+        if (!skip) {
+            app_name_entry_t *tmp = realloc(ctx->app_name_table,
+                sizeof(app_name_entry_t) * (size_t)(ctx->app_name_count + 1));
+            if (!tmp) break;
+            ctx->app_name_table = tmp;
+            strncpy(ctx->app_name_table[ctx->app_name_count].uid,
+                    app->unique_identifier, 63);
+            ctx->app_name_table[ctx->app_name_count].uid[63] = '\0';
+            strncpy(ctx->app_name_table[ctx->app_name_count].name,
+                    app->name, 63);
+            ctx->app_name_table[ctx->app_name_count].name[63] = '\0';
+            ctx->app_name_count++;
+        }
+        app = application_list_get_next(handle);
+    }
+    /* handle intentionally not closed — pointers stay valid for process lifetime */
+
+    /* Helper: look up display name for a uid */
+    #define LOOKUP_NAME(uid_str, out_name) do { \
+        (out_name)[0] = '\0'; \
+        for (int _i = 0; _i < ctx->app_name_count; _i++) { \
+            if (strcmp(ctx->app_name_table[_i].uid, (uid_str)) == 0) { \
+                strncpy((out_name), ctx->app_name_table[_i].name, 63); \
+                (out_name)[63] = '\0'; \
+                break; \
+            } \
+        } \
+        if (!(out_name)[0]) { strncpy((out_name), (uid_str), 63); (out_name)[63] = '\0'; } \
+    } while(0)
+
+    /* Track which installed apps have been placed */
+    bool *seen = calloc((size_t)ctx->app_name_count, sizeof(bool));
+
+    /* Read and parse apps.json */
+    FILE *f = fopen("APPS:[badgevms_launcher]apps.json", "r");
+    cJSON *root = NULL;
+    if (f) {
+        fseek(f, 0, SEEK_END);
+        long sz = ftell(f);
+        rewind(f);
+        if (sz > 0) {
+            char *buf = malloc((size_t)sz + 1);
+            if (buf) {
+                size_t n = fread(buf, 1, (size_t)sz, f);
+                buf[n] = '\0';
+                root = cJSON_Parse(buf);
+                free(buf);
+            }
+        }
+        fclose(f);
+    }
+
+    if (root) {
+        cJSON *items_arr = cJSON_GetObjectItem(root, "items");
+        if (items_arr) {
+            cJSON *item_obj;
+            cJSON_ArrayForEach(item_obj, items_arr) {
+                cJSON      *type_j   = cJSON_GetObjectItem(item_obj, "type");
+                const char *type_str = cJSON_GetStringValue(type_j);
+                if (!type_str) continue;
+
+                if (strcmp(type_str, "app") == 0) {
+                    const char *uid = cJSON_GetStringValue(cJSON_GetObjectItem(item_obj, "uid"));
+                    if (!uid) continue;
+                    /* Only add if installed */
+                    int installed_idx = -1;
+                    for (int i = 0; i < ctx->app_name_count; i++) {
+                        if (strcmp(ctx->app_name_table[i].uid, uid) == 0) {
+                            installed_idx = i;
+                            break;
+                        }
+                    }
+                    if (installed_idx < 0) continue;
+                    if (seen) seen[installed_idx] = true;
+                    reorder_item_t *it = reorder_append(ctx);
+                    if (!it) continue;
+                    it->is_folder = false;
+                    strncpy(it->uid, uid, 63); it->uid[63] = '\0';
+                    LOOKUP_NAME(uid, it->display_name);
+
+                } else if (strcmp(type_str, "folder") == 0) {
+                    const char *folder_name = cJSON_GetStringValue(
+                        cJSON_GetObjectItem(item_obj, "name"));
+                    cJSON *apps_j = cJSON_GetObjectItem(item_obj, "apps");
+                    if (!folder_name || !apps_j) continue;
+
+                    reorder_item_t *it = reorder_append(ctx);
+                    if (!it) continue;
+                    it->is_folder = true;
+                    strncpy(it->display_name, folder_name, 63);
+                    it->display_name[63] = '\0';
+
+                    cJSON *uid_item;
+                    cJSON_ArrayForEach(uid_item, apps_j) {
+                        const char *uid = cJSON_GetStringValue(uid_item);
+                        if (!uid) continue;
+                        for (int i = 0; i < ctx->app_name_count; i++) {
+                            if (strcmp(ctx->app_name_table[i].uid, uid) == 0) {
+                                if (seen) seen[i] = true;
+                                reorder_folder_append(it, uid);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        cJSON_Delete(root);
+    }
+
+    /* Append any installed apps not seen in apps.json */
+    for (int i = 0; i < ctx->app_name_count; i++) {
+        if (!seen || !seen[i]) {
+            reorder_item_t *it = reorder_append(ctx);
+            if (!it) continue;
+            it->is_folder = false;
+            strncpy(it->uid,          ctx->app_name_table[i].uid,  63); it->uid[63]          = '\0';
+            strncpy(it->display_name, ctx->app_name_table[i].name, 63); it->display_name[63] = '\0';
+        }
+    }
+
+    free(seen);
+    #undef LOOKUP_NAME
+}
+
 static void draw_main_settings(app_context *ctx) {
     int window_x = 30;
     int window_y = 30;
