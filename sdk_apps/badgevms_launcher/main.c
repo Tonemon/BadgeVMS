@@ -601,7 +601,7 @@ static void build_item_list(Launcher_Context *ctx) {
     size_t          num_apps = ctx->num_apps;
 
     /* --- Read and parse folders.json --- */
-    FILE *f = fopen("APPS:[badgevms_launcher]/folders.json", "r");
+    FILE *f = fopen("APPS:[badgevms_launcher]folders.json", "r");
     cJSON *root = NULL;
     if (f) {
         fseek(f, 0, SEEK_END);
