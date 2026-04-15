@@ -27,6 +27,14 @@
 
 typedef enum { SCREEN_MAIN, SCREEN_WIFI, SCREEN_DISPLAY, SCREEN_SYSTEM, SCREEN_ABOUT } ScreenState;
 
+#define NAV_STACK_MAX 8
+
+typedef struct {
+    ScreenState screen;
+    int         selected_item;
+    int         scroll_offset;
+} NavEntry;
+
 typedef struct {
     char ssid[64];
     int  signal_strength; // 0-100
@@ -62,6 +70,9 @@ typedef struct {
     char connecting_ssid[64];
     char connection_status_text[128];
     bool connecting_secured;
+
+    NavEntry nav_stack[NAV_STACK_MAX];
+    int      nav_depth;
 } app_context;
 
 static void render_screen(app_context *ctx);
@@ -209,6 +220,31 @@ static void populate_wifi_networks(app_context *ctx) {
 
     if (connected) {
         wifi_scan_free_station(connected);
+    }
+}
+
+static void nav_push(app_context *ctx, ScreenState screen) {
+    if (ctx->nav_depth < NAV_STACK_MAX - 1) {
+        ctx->nav_stack[ctx->nav_depth].screen        = ctx->current_screen;
+        ctx->nav_stack[ctx->nav_depth].selected_item = ctx->selected_item;
+        ctx->nav_stack[ctx->nav_depth].scroll_offset = ctx->scroll_offset;
+        ctx->nav_depth++;
+    }
+    ctx->current_screen = screen;
+    ctx->selected_item  = 0;
+    ctx->scroll_offset  = 0;
+}
+
+static void nav_pop(app_context *ctx) {
+    if (ctx->nav_depth > 0) {
+        ctx->nav_depth--;
+        ctx->current_screen = ctx->nav_stack[ctx->nav_depth].screen;
+        ctx->selected_item  = ctx->nav_stack[ctx->nav_depth].selected_item;
+        ctx->scroll_offset  = ctx->nav_stack[ctx->nav_depth].scroll_offset;
+    } else {
+        SDL_Event quit_event;
+        quit_event.type = SDL_EVENT_QUIT;
+        SDL_PushEvent(&quit_event);
     }
 }
 
@@ -586,19 +622,15 @@ static void handle_key_event(app_context *ctx, SDL_Event *event) {
                     ctx->selected_item++;
             } else if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
                 switch (ctx->selected_item) {
-                    case 0: ctx->current_screen = SCREEN_WIFI; break;
+                    case 0: nav_push(ctx, SCREEN_WIFI); break;
                     case 1:
-                        ctx->current_screen = SCREEN_ABOUT;
+                        nav_push(ctx, SCREEN_ABOUT);
                         break;
-                        // case 1: ctx->current_screen = SCREEN_DISPLAY; break;
-                        // case 2: ctx->current_screen = SCREEN_SYSTEM; break;
+                        // case 1: nav_push(ctx, SCREEN_DISPLAY); break;
+                        // case 2: nav_push(ctx, SCREEN_SYSTEM); break;
                 }
-                ctx->selected_item = 0;
-                ctx->scroll_offset = 0;
             } else if (key == SDLK_ESCAPE) {
-                SDL_Event quit_event;
-                quit_event.type = SDL_EVENT_QUIT;
-                SDL_PushEvent(&quit_event);
+                nav_pop(ctx);
             }
             break;
 
@@ -630,23 +662,19 @@ static void handle_key_event(app_context *ctx, SDL_Event *event) {
             } else if (key == SDLK_S) {
                 ctx->network_count = 0;
             } else if (key == SDLK_ESCAPE) {
-                ctx->current_screen = SCREEN_MAIN;
-                ctx->selected_item  = 0;
-                ctx->scroll_offset  = 0;
+                nav_pop(ctx);
             }
             break;
 
         case SCREEN_ABOUT:
             if (key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_ESCAPE) {
-                ctx->current_screen = SCREEN_MAIN;
-                ctx->selected_item  = 1;
+                nav_pop(ctx);
             }
             break;
 
         default:
             if (key == SDLK_ESCAPE) {
-                ctx->current_screen = SCREEN_MAIN;
-                ctx->selected_item  = 0;
+                nav_pop(ctx);
             }
             break;
     }
@@ -731,6 +759,7 @@ int main(int argc, char *argv[]) {
     ctx.current_screen = SCREEN_MAIN;
     ctx.selected_item  = 0;
     ctx.scroll_offset  = 0;
+    ctx.nav_depth      = 0;
 
     SDL_StartTextInput(ctx.window);
 
