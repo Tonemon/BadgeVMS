@@ -527,6 +527,210 @@ static void reorder_init(app_context *ctx) {
     #undef LOOKUP_NAME
 }
 
+static void draw_reorder_dialog(app_context *ctx) {
+    int dialog_w = 500;
+    int dialog_h = (ctx->reorder_dialog_type == DIALOG_DELETE_CONFIRM) ? 200 : 220;
+    int dialog_x = (SCREEN_WIDTH  - dialog_w) / 2;
+    int dialog_y = (SCREEN_HEIGHT - dialog_h) / 2;
+
+    draw_rect(ctx, dialog_x + 5, dialog_y + 5, dialog_w, dialog_h, 0x505050);
+    draw_rect(ctx, dialog_x, dialog_y, dialog_w, dialog_h, CDE_PANEL_COLOR);
+    draw_3d_border(ctx, dialog_x, dialog_y, dialog_w, dialog_h, 0);
+
+    int title_h = 30;
+    draw_rect(ctx, dialog_x + 2, dialog_y + 2, dialog_w - 4, title_h, CDE_TITLE_BG);
+
+    if (ctx->reorder_dialog_type == DIALOG_DELETE_CONFIRM) {
+        draw_text_bold(ctx, dialog_x + 10, dialog_y + 8, "Delete Folder", CDE_SELECTED_TEXT);
+        char msg1[128];
+        snprintf(msg1, sizeof(msg1), "Delete folder '%s'?",
+                 ctx->reorder_items[ctx->reorder_rename_idx].display_name);
+        draw_text(ctx, dialog_x + 20, dialog_y + title_h + 25, msg1, CDE_TEXT_COLOR);
+        draw_text(ctx, dialog_x + 20, dialog_y + title_h + 55,
+                  "All apps will be moved to the home screen.", CDE_INACTIVE_TEXT);
+        draw_text_centered(ctx, dialog_x, dialog_y + dialog_h - 35, dialog_w,
+                           "ENTER: Confirm   ESC: Cancel", CDE_INACTIVE_TEXT);
+    } else {
+        const char *title_text = (ctx->reorder_dialog_type == DIALOG_NEW_FOLDER)
+            ? "New Folder" : "Rename Folder";
+        draw_text_bold(ctx, dialog_x + 10, dialog_y + 8, title_text, CDE_SELECTED_TEXT);
+
+        int cy = dialog_y + title_h + 25;
+        draw_text(ctx, dialog_x + 20, cy, "Folder name:", CDE_TEXT_COLOR);
+
+        int field_x = dialog_x + 20;
+        int field_y = cy + 30;
+        int field_w = dialog_w - 40;
+        int field_h = 35;
+        draw_rect(ctx, field_x, field_y, field_w, field_h, 0xFFFFFF);
+        draw_3d_border(ctx, field_x, field_y, field_w, field_h, 1);
+        draw_text(ctx, field_x + 5, field_y + 7, ctx->reorder_dialog_buf, CDE_TEXT_COLOR);
+        int cursor_x = field_x + 5 + get_text_width(ctx->reorder_dialog_buf);
+        if (SDL_GetTicks() % 1000 < 500)
+            draw_rect(ctx, cursor_x, field_y + 7, 2, FONT_HEIGHT, CDE_TEXT_COLOR);
+
+        draw_text_centered(ctx, dialog_x, dialog_y + dialog_h - 35, dialog_w,
+                           "ENTER: Confirm   ESC: Cancel", CDE_INACTIVE_TEXT);
+    }
+}
+
+static void draw_reorder_screen(app_context *ctx) {
+    int window_x = 30, window_y = 30;
+    int window_w = SCREEN_WIDTH - 60, window_h = SCREEN_HEIGHT - 60;
+
+    draw_rect(ctx, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, CDE_BG_COLOR);
+    draw_rect(ctx, window_x, window_y, window_w, window_h, CDE_PANEL_COLOR);
+    draw_3d_border(ctx, window_x, window_y, window_w, window_h, 0);
+
+    int title_h = 45;
+    draw_rect(ctx, window_x + 3, window_y + 3, window_w - 6, title_h, CDE_TITLE_BG);
+    if (ctx->reorder_in_folder) {
+        char title[128];
+        snprintf(title, sizeof(title), "Reorder Apps > %s",
+                 ctx->reorder_items[ctx->reorder_folder_idx].display_name);
+        draw_text_bold(ctx, window_x + 15, window_y + 11, title, CDE_SELECTED_TEXT);
+    } else {
+        draw_text_bold(ctx, window_x + 15, window_y + 11, "Reorder Apps", CDE_SELECTED_TEXT);
+    }
+
+    int list_y      = window_y + title_h + 15;
+    int list_h      = window_h - title_h - 70;
+    int item_height = 70;
+
+    draw_rect(ctx, window_x + 15, list_y, window_w - 30, list_h, 0xFFFFFF);
+    draw_3d_border(ctx, window_x + 15, list_y, window_w - 30, list_h, 1);
+
+    int ipp = (list_h - 6) / item_height;
+    ctx->reorder_items_per_page = ipp;
+
+    if (ctx->reorder_in_folder) {
+        /* ---- Folder sub-view ---- */
+        reorder_item_t *folder = &ctx->reorder_items[ctx->reorder_folder_idx];
+        int total  = folder->folder_app_count;
+        int scroll = ctx->reorder_folder_scroll;
+        int sel    = ctx->reorder_folder_sel;
+        int ve     = scroll + ipp;
+        if (ve > total) ve = total;
+
+        for (int i = scroll; i < ve; i++) {
+            int item_y = list_y + 3 + (i - scroll) * item_height;
+            int item_x = window_x + 18;
+            int item_w = window_w - 36;
+            bool selected = (i == sel);
+
+            if (selected)
+                draw_rect(ctx, item_x, item_y, item_w, item_height - 2, CDE_SELECTED_BG);
+            uint32_t tc = selected ? CDE_SELECTED_TEXT : CDE_TEXT_COLOR;
+            uint32_t sc = selected ? CDE_SELECTED_TEXT : CDE_INACTIVE_TEXT;
+
+            int icon_x = item_x + 10;
+            int icon_y = item_y + (item_height - 48) / 2;
+            draw_rect(ctx, icon_x, icon_y, 48, 48, selected ? CDE_SELECTED_TEXT : CDE_BUTTON_COLOR);
+            draw_3d_border(ctx, icon_x, icon_y, 48, 48, 1);
+
+            const char *uid = folder->folder_apps[i];
+            const char *name = uid;
+            for (int j = 0; j < ctx->app_name_count; j++) {
+                if (strcmp(ctx->app_name_table[j].uid, uid) == 0) {
+                    name = ctx->app_name_table[j].name;
+                    break;
+                }
+            }
+            int text_x = icon_x + 48 + 15;
+            draw_text_bold(ctx, text_x, item_y + 10, name, tc);
+            draw_text(ctx, text_x, item_y + 35, uid, sc);
+
+            if (i < ve - 1)
+                draw_rect(ctx, item_x, item_y + item_height - 2, item_w, 1, CDE_BORDER_DARK);
+        }
+
+        /* Footer */
+        draw_rect(ctx, window_x + 3, window_y + window_h - 42, window_w - 6, 39, CDE_BUTTON_COLOR);
+        draw_3d_border(ctx, window_x + 3, window_y + window_h - 42, window_w - 6, 39, 1);
+        draw_text(ctx, window_x + 15, window_y + window_h - 35,
+                  "UP/DOWN: Navigate  BACKSPACE: Remove from folder  ESC: Back",
+                  CDE_TEXT_COLOR);
+
+    } else {
+        /* ---- Home view ---- */
+        int total  = ctx->reorder_item_count;
+        int scroll = ctx->reorder_scroll;
+        int sel    = ctx->reorder_selected;
+        int held   = ctx->reorder_held;
+        int ve     = scroll + ipp;
+        if (ve > total) ve = total;
+
+        for (int i = scroll; i < ve; i++) {
+            int item_y = list_y + 3 + (i - scroll) * item_height;
+            int item_x = window_x + 18;
+            int item_w = window_w - 36;
+            reorder_item_t *it = &ctx->reorder_items[i];
+            bool is_sel  = (i == sel);
+            bool is_held = (i == held && held >= 0);
+
+            uint32_t bg = 0;
+            if (is_sel)       bg = CDE_SELECTED_BG;
+            else if (is_held) bg = CDE_TITLE_BG;
+            if (bg) draw_rect(ctx, item_x, item_y, item_w, item_height - 2, bg);
+
+            uint32_t tc = (is_sel || is_held) ? CDE_SELECTED_TEXT : CDE_TEXT_COLOR;
+            uint32_t sc = (is_sel || is_held) ? CDE_SELECTED_TEXT : CDE_INACTIVE_TEXT;
+
+            int icon_x = item_x + 10;
+            int icon_y = item_y + (item_height - 48) / 2;
+            draw_rect(ctx, icon_x, icon_y, 48, 48, (is_sel || is_held) ? CDE_SELECTED_TEXT : CDE_BUTTON_COLOR);
+            draw_3d_border(ctx, icon_x, icon_y, 48, 48, 1);
+
+            /* Show [>] inside icon box for held-but-not-cursor item */
+            if (is_held && !is_sel)
+                draw_text(ctx, icon_x + 8, icon_y + 16, "[>]", CDE_SELECTED_TEXT);
+
+            int text_x = icon_x + 48 + 15;
+            if (it->is_folder) {
+                if (!is_held || is_sel)
+                    draw_text(ctx, icon_x + 8, icon_y + 16, "[F]", tc);
+                draw_text_bold(ctx, text_x, item_y + 10, it->display_name, tc);
+                char sub[48];
+                snprintf(sub, sizeof(sub), "%d app%s",
+                         it->folder_app_count, it->folder_app_count == 1 ? "" : "s");
+                draw_text(ctx, text_x, item_y + 35, sub, sc);
+            } else {
+                draw_text_bold(ctx, text_x, item_y + 10, it->display_name, tc);
+                draw_text(ctx, text_x, item_y + 35, it->uid, sc);
+            }
+
+            if (i < ve - 1)
+                draw_rect(ctx, item_x, item_y + item_height - 2, item_w, 1, CDE_BORDER_DARK);
+        }
+
+        /* Scrollbar */
+        if (total > ipp) {
+            int sbx = window_x + window_w - 35;
+            int sby = list_y + 3;
+            int sbh = list_h - 6;
+            draw_rect(ctx, sbx, sby, 20, sbh, CDE_BUTTON_COLOR);
+            draw_3d_border(ctx, sbx, sby, 20, sbh, 1);
+            int th = (sbh * ipp) / total;
+            if (th < 20) th = 20;
+            int ty = sby + (total > ipp ? ((sbh - th) * scroll) / (total - ipp) : 0);
+            draw_rect(ctx, sbx + 3, ty, 14, th, CDE_PANEL_COLOR);
+            draw_3d_border(ctx, sbx + 3, ty, 14, th, 0);
+        }
+
+        /* Footer */
+        draw_rect(ctx, window_x + 3, window_y + window_h - 42, window_w - 6, 39, CDE_BUTTON_COLOR);
+        draw_3d_border(ctx, window_x + 3, window_y + window_h - 42, window_w - 6, 39, 1);
+        const char *hint = (held >= 0)
+            ? "UP/DOWN: Navigate  ENTER: Drop/Place in folder  ESC: Cancel"
+            : "UP/DOWN: Navigate  ENTER: Grab/Enter  N: New  R: Rename  BACKSPACE: Delete  ESC: Back";
+        draw_text(ctx, window_x + 15, window_y + window_h - 35, hint, CDE_TEXT_COLOR);
+    }
+
+    /* Dialog overlay */
+    if (ctx->reorder_dialog_type != DIALOG_NONE)
+        draw_reorder_dialog(ctx);
+}
+
 static void draw_main_settings(app_context *ctx) {
     int window_x = 30;
     int window_y = 30;
@@ -979,6 +1183,7 @@ static void render_screen(app_context *ctx) {
             draw_main_settings(ctx);
             draw_about_dialog(ctx);
             break;
+        case SCREEN_REORDER: draw_reorder_screen(ctx); break;
     }
 
     SDL_UpdateTexture(ctx->texture, NULL, ctx->pixels, SCREEN_WIDTH * sizeof(uint16_t));
