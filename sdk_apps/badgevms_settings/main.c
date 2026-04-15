@@ -747,14 +747,13 @@ static void draw_main_settings(app_context *ctx) {
     draw_text_bold(ctx, window_x + 15, window_y + 11, "System Settings", CDE_SELECTED_TEXT);
 
     // char const *categories[]   = {"WiFi Settings", "Display Settings", "System Information", "About"};
-    char const *categories[]   = {"WiFi Settings", "About"};
+    char const *categories[]   = {"WiFi Settings", "Reorder Apps", "About"};
     char const *descriptions[] = {
         "Configure wireless network connection",
-        // "Adjust screen brightness and timeout",
-        // "View system status and diagnostics",
+        "Organise launcher home screen and folders",
         "Application version and credits"
     };
-    ctx->total_items = 2;
+    ctx->total_items = 3;
 
     int list_y      = window_y + title_h + 20;
     int list_h      = window_h - title_h - 80;
@@ -1393,10 +1392,10 @@ static void handle_key_event(app_context *ctx, SDL_Event *event) {
                 switch (ctx->selected_item) {
                     case 0: nav_push(ctx, SCREEN_WIFI); break;
                     case 1:
-                        nav_push(ctx, SCREEN_ABOUT);
+                        reorder_init(ctx);
+                        nav_push(ctx, SCREEN_REORDER);
                         break;
-                        // case 1: nav_push(ctx, SCREEN_DISPLAY); break;
-                        // case 2: nav_push(ctx, SCREEN_SYSTEM); break;
+                    case 2: nav_push(ctx, SCREEN_ABOUT); break;
                 }
             } else if (key == SDLK_ESCAPE) {
                 nav_pop(ctx);
