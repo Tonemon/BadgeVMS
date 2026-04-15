@@ -387,6 +387,7 @@ static void enter_folder(Launcher_Context *ctx, const char *folder_name) {
     ctx->saved_home_scroll   = ctx->scroll_offset;
 
     /* Collect apps that belong to this folder (JSON order) */
+    free(ctx->folder_apps);
     ctx->folder_apps      = NULL;
     ctx->folder_app_count = 0;
 
@@ -404,6 +405,7 @@ static void enter_folder(Launcher_Context *ctx, const char *folder_name) {
             if (!uids) break;
 
             int n = cJSON_GetArraySize(uids);
+            if (n <= 0) break;
             ctx->folder_apps = malloc((size_t)n * sizeof(application_t *));
             if (!ctx->folder_apps) break;
 
