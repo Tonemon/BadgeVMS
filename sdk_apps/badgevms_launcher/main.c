@@ -15,6 +15,7 @@
 #include <time.h>
 #include <unistd.h>
 #include "stb_image.h"
+#include "cJSON.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -33,6 +34,24 @@
 #define CDE_BUTTON_COLOR  0xD4D0C8
 #define CDE_TITLE_BG      0x808080
 #define CDE_INACTIVE_TEXT 0x808080
+
+/* ---- Folder support types ---- */
+
+typedef enum {
+    ITEM_APP,
+    ITEM_FOLDER,
+} launcher_item_type_t;
+
+typedef struct {
+    launcher_item_type_t type;
+    union {
+        application_t *app;          /* type == ITEM_APP    */
+        struct {
+            char name[64];           /* folder display name */
+            int  app_count;          /* installed apps in this folder */
+        } folder;                    /* type == ITEM_FOLDER */
+    };
+} launcher_item_t;
 
 /* --- Boot screen scan thread state --- */
 static atomic_bool     g_scan_done  = false;
@@ -84,13 +103,29 @@ typedef struct {
     window_handle_t window;
     framebuffer_t  *framebuffer;
     uint16_t       *pixels;
+    /* Full scanned app list (owned by scan_thread's list handle) */
     application_t **applications;
+    size_t          num_apps;
+    /* Current-view navigation */
     int             scroll_offset;
     int             selected_item;
-    int             total_items;
+    int             total_items;      /* length of the active list */
     int             items_per_page;
     bool            show_about;
     bool            quit;
+    /* Home-screen item list */
+    launcher_item_t *items;
+    int              item_count;
+    int              folder_start_index; /* index of first folder item seen; -1 if none (informational) */
+    /* Folder view state */
+    char            *current_folder;     /* NULL = home; pointer into items[i].folder.name */
+    application_t  **folder_apps;
+    int              folder_app_count;
+    /* Saved home navigation for restore on leave */
+    int              saved_home_selected;
+    int              saved_home_scroll;
+    /* Parsed apps.json kept alive for folder lookups */
+    cJSON           *apps_json;
 } Launcher_Context;
 
 static inline uint16_t rgb888_to_rgb565_color(uint32_t rgb888) {
@@ -195,6 +230,21 @@ static void draw_button(Launcher_Context *ctx, int x, int y, int w, int h, char 
     draw_text_centered(ctx, x, text_y, w, text, CDE_TEXT_COLOR);
 }
 
+/* Draw "vX.Y - Author" subtitle for an app row. Handles missing version/author. */
+static void draw_app_subtitle(Launcher_Context *ctx, int x, int y,
+                              application_t const *app, uint32_t color) {
+    char sub[96];
+    if (app->version && app->author)
+        snprintf(sub, sizeof(sub), "v%s - %s", app->version, app->author);
+    else if (app->version)
+        snprintf(sub, sizeof(sub), "v%s", app->version);
+    else if (app->author)
+        snprintf(sub, sizeof(sub), "%s", app->author);
+    else
+        return;
+    draw_text(ctx, x, y, sub, color);
+}
+
 static void draw_about_dialog(Launcher_Context *ctx) {
     int dialog_w = 450;
     int dialog_h = 350;
@@ -212,7 +262,9 @@ static void draw_about_dialog(Launcher_Context *ctx) {
 
     int content_y = dialog_y + title_h + 30;
     draw_text_centered(ctx, dialog_x, content_y, dialog_w, "BadgeVMS", CDE_TEXT_COLOR);
-    draw_text_centered(ctx, dialog_x, content_y + 30, dialog_w, "Version 1.0", CDE_TEXT_COLOR);
+    char version_str[32];
+    snprintf(version_str, sizeof(version_str), "Version %d", BADGEVMS_VERSION);
+    draw_text_centered(ctx, dialog_x, content_y + 30, dialog_w, version_str, CDE_TEXT_COLOR);
     draw_text_centered(
         ctx,
         dialog_x,
@@ -232,126 +284,213 @@ static void draw_launcher_window(Launcher_Context *ctx) {
     int window_h = SCREEN_HEIGHT - 60;
 
     draw_rect(ctx, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, CDE_BG_COLOR);
-
     draw_rect(ctx, window_x, window_y, window_w, window_h, CDE_PANEL_COLOR);
     draw_3d_border(ctx, window_x, window_y, window_w, window_h, 0);
 
+    /* --- Title bar --- */
     int title_h = 45;
     draw_rect(ctx, window_x + 3, window_y + 3, window_w - 6, title_h, CDE_TITLE_BG);
-    draw_text_bold(ctx, window_x + 15, window_y + 11, "WHY Application Launcher", CDE_SELECTED_TEXT);
 
-    char count_text[64];
-    if (ctx->total_items == 1) {
-        snprintf(count_text, sizeof(count_text), "1 Application Available");
+    int title_x = window_x + 15;
+    int title_y = window_y + 11;
+    if (ctx->current_folder) {
+        char title[128];
+        snprintf(title, sizeof(title), "WHY Application Launcher > %s", ctx->current_folder);
+        draw_text_bold(ctx, title_x, title_y, title, CDE_SELECTED_TEXT);
     } else {
-        snprintf(count_text, sizeof(count_text), "%d Applications Available", ctx->total_items);
+        /* Count total apps and folders across the whole item list */
+        int folder_count = 0;
+        int app_count    = 0;
+        for (int i = 0; i < ctx->item_count; i++) {
+            if (ctx->items[i].type == ITEM_FOLDER) {
+                folder_count++;
+                app_count += ctx->items[i].folder.app_count;
+            } else {
+                app_count++;
+            }
+        }
+        draw_text_bold(ctx, title_x, title_y, "WHY Application Launcher", CDE_SELECTED_TEXT);
+        if (folder_count > 0) {
+            int lw = get_text_width("WHY Application Launcher");
+            draw_rect(ctx, title_x + lw + 8, title_y + (FONT_HEIGHT - 5) / 2, 5, 5, CDE_SELECTED_TEXT);
+            char right[64];
+            snprintf(right, sizeof(right), "%d apps, %d folder%s",
+                     app_count, folder_count, folder_count == 1 ? "" : "s");
+            draw_text_bold(ctx, title_x + lw + 20, title_y, right, CDE_SELECTED_TEXT);
+        }
     }
-    draw_text(ctx, window_x + 15, window_y + title_h + 20, count_text, CDE_TEXT_COLOR);
 
-    int list_y      = window_y + title_h + 55;
-    int list_h      = window_h - title_h - 110;
+    /* --- Item list area --- */
+    int list_y      = window_y + title_h + 15;
+    int list_h      = window_h - title_h - 70;
     int item_height = 80;
 
     draw_rect(ctx, window_x + 15, list_y, window_w - 30, list_h, 0xFFFFFF);
     draw_3d_border(ctx, window_x + 15, list_y, window_w - 30, list_h, 1);
 
     ctx->items_per_page = (list_h - 6) / item_height;
-    int visible_start   = ctx->scroll_offset;
-    int visible_end     = visible_start + ctx->items_per_page;
-    if (visible_end > ctx->total_items)
-        visible_end = ctx->total_items;
+
+    /* Determine which list we're rendering */
+    int total = ctx->total_items;
+    int visible_start = ctx->scroll_offset;
+    int visible_end   = visible_start + ctx->items_per_page;
+    if (visible_end > total) visible_end = total;
 
     for (int i = visible_start; i < visible_end; i++) {
         int item_y = list_y + 3 + (i - visible_start) * item_height;
         int item_x = window_x + 18;
         int item_w = window_w - 36;
 
-        if (i == ctx->selected_item) {
+        bool selected = (i == ctx->selected_item);
+        if (selected) {
             draw_rect(ctx, item_x, item_y, item_w, item_height - 2, CDE_SELECTED_BG);
         }
-
-        uint32_t text_color = (i == ctx->selected_item) ? CDE_SELECTED_TEXT : CDE_TEXT_COLOR;
+        uint32_t text_color = selected ? CDE_SELECTED_TEXT : CDE_TEXT_COLOR;
 
         int icon_size = 48;
         int icon_x    = item_x + 10;
         int icon_y    = item_y + (item_height - icon_size) / 2;
 
-        uint32_t icon_color = (i == ctx->selected_item) ? CDE_SELECTED_TEXT : CDE_BUTTON_COLOR;
+        uint32_t icon_color = selected ? CDE_SELECTED_TEXT : CDE_BUTTON_COLOR;
         draw_rect(ctx, icon_x, icon_y, icon_size, icon_size, icon_color);
         draw_3d_border(ctx, icon_x, icon_y, icon_size, icon_size, 1);
 
         int text_x = icon_x + icon_size + 15;
-        draw_text_bold(ctx, text_x, item_y + 10, ctx->applications[i]->name, text_color);
 
-        if (ctx->applications[i]->version) {
-            char version_text[64];
-            snprintf(version_text, sizeof(version_text), "v%s", ctx->applications[i]->version);
-            draw_text(ctx, text_x, item_y + 35, version_text, text_color);
-        }
-
-#if 0
-        if (ctx->applications[i].description) {
-            char desc[60] = {0};
-            int max_desc_chars = ((item_w - text_x + item_x - 16) / FONT_WIDTH);
-            if (max_desc_chars > 59) max_desc_chars = 59;
-            
-            strncpy(desc, ctx->applications[i].description, max_desc_chars);
-            desc[max_desc_chars] = '\0';
-            
-            if (strlen(ctx->applications[i].description) > max_desc_chars) {
-                desc[max_desc_chars - 3] = '.';
-                desc[max_desc_chars - 2] = '.';
-                desc[max_desc_chars - 1] = '.';
+        if (ctx->current_folder) {
+            /* Folder view: always rendering an app */
+            application_t *app = ctx->folder_apps[i];
+            draw_text_bold(ctx, text_x, item_y + 10, app->name, text_color);
+            draw_app_subtitle(ctx, text_x, item_y + 35, app,
+                              selected ? CDE_SELECTED_TEXT : CDE_INACTIVE_TEXT);
+        } else {
+            /* Home view: ITEM_APP or ITEM_FOLDER */
+            launcher_item_t *item = &ctx->items[i];
+            if (item->type == ITEM_APP) {
+                draw_text_bold(ctx, text_x, item_y + 10, item->app->name, text_color);
+                draw_app_subtitle(ctx, text_x, item_y + 35, item->app,
+                                  selected ? CDE_SELECTED_TEXT : CDE_INACTIVE_TEXT);
+            } else {
+                /* Folder row: draw "[F]" inside icon box, show app count as subtitle */
+                draw_text_bold(ctx, icon_x + 14, icon_y + 16, "[F]", text_color);
+                draw_text_bold(ctx, text_x, item_y + 10, item->folder.name, text_color);
+                char sub[48];
+                snprintf(sub, sizeof(sub), "%d app%s",
+                         item->folder.app_count,
+                         item->folder.app_count == 1 ? "" : "s");
+                draw_text(ctx, text_x, item_y + 35, sub,
+                          selected ? CDE_SELECTED_TEXT : CDE_INACTIVE_TEXT);
             }
-            draw_text(ctx, text_x, item_y + 58, desc, text_color);
         }
-#endif
 
         if (i < visible_end - 1) {
             draw_rect(ctx, item_x, item_y + item_height - 2, item_w, 1, CDE_BORDER_DARK);
         }
     }
 
-    if (ctx->total_items > ctx->items_per_page) {
+    /* --- Scrollbar --- */
+    if (total > ctx->items_per_page) {
         int scrollbar_x = window_x + window_w - 35;
         int scrollbar_y = list_y + 3;
         int scrollbar_h = list_h - 6;
-
         draw_rect(ctx, scrollbar_x, scrollbar_y, 20, scrollbar_h, CDE_BUTTON_COLOR);
         draw_3d_border(ctx, scrollbar_x, scrollbar_y, 20, scrollbar_h, 1);
 
-        int thumb_h = (scrollbar_h * ctx->items_per_page) / ctx->total_items;
-        if (thumb_h < 30)
-            thumb_h = 30;
-
+        int thumb_h = (scrollbar_h * ctx->items_per_page) / total;
+        if (thumb_h < 30) thumb_h = 30;
         int thumb_y = scrollbar_y;
-        if (ctx->total_items > ctx->items_per_page) {
-            thumb_y += ((scrollbar_h - thumb_h) * ctx->scroll_offset) / (ctx->total_items - ctx->items_per_page);
+        if (total > ctx->items_per_page) {
+            thumb_y += ((scrollbar_h - thumb_h) * ctx->scroll_offset) /
+                       (total - ctx->items_per_page);
         }
-
         draw_rect(ctx, scrollbar_x + 3, thumb_y, 14, thumb_h, CDE_PANEL_COLOR);
         draw_3d_border(ctx, scrollbar_x + 3, thumb_y, 14, thumb_h, 0);
     }
 
+    /* --- Footer hint --- */
     draw_rect(ctx, window_x + 3, window_y + window_h - 42, window_w - 6, 39, CDE_BUTTON_COLOR);
     draw_3d_border(ctx, window_x + 3, window_y + window_h - 42, window_w - 6, 39, 1);
 
-    draw_text(
-        ctx,
-        window_x + 15,
-        window_y + window_h - 35,
-        "UP/DOWN: Navigate  ENTER: Launch  A: About  ESC: Exit",
-        CDE_TEXT_COLOR
-    );
+    char const *hint = ctx->current_folder
+        ? "UP/DOWN: Navigate  ENTER: Launch  A: About  ESC/DEL: Back"
+        : "UP/DOWN: Navigate  ENTER: Open  A: About  ESC: Exit";
+    draw_text(ctx, window_x + 15, window_y + window_h - 35, hint, CDE_TEXT_COLOR);
+}
+
+/* enter_folder — switch from home view into a named folder's app list */
+static void enter_folder(Launcher_Context *ctx, const char *folder_name) {
+    ctx->saved_home_selected = ctx->selected_item;
+    ctx->saved_home_scroll   = ctx->scroll_offset;
+
+    free(ctx->folder_apps);
+    ctx->folder_apps      = NULL;
+    ctx->folder_app_count = 0;
+
+    cJSON *items_arr = ctx->apps_json
+        ? cJSON_GetObjectItem(ctx->apps_json, "items") : NULL;
+
+    if (items_arr) {
+        cJSON *item_obj;
+        cJSON_ArrayForEach(item_obj, items_arr) {
+            cJSON      *type_j   = cJSON_GetObjectItem(item_obj, "type");
+            const char *type_str = cJSON_GetStringValue(type_j);
+            if (!type_str || strcmp(type_str, "folder") != 0) continue;
+
+            cJSON      *name_j = cJSON_GetObjectItem(item_obj, "name");
+            const char *name   = cJSON_GetStringValue(name_j);
+            if (!name || strcmp(name, folder_name) != 0) continue;
+
+            cJSON *uids = cJSON_GetObjectItem(item_obj, "apps");
+            if (!uids) break;
+
+            int n = cJSON_GetArraySize(uids);
+            if (n <= 0) break;
+            ctx->folder_apps = malloc((size_t)n * sizeof(application_t *));
+            if (!ctx->folder_apps) break;
+
+            cJSON *uid_item;
+            cJSON_ArrayForEach(uid_item, uids) {
+                const char *uid = cJSON_GetStringValue(uid_item);
+                if (!uid) continue;
+                for (size_t i = 0; i < ctx->num_apps; i++) {
+                    if (strcmp(ctx->applications[i]->unique_identifier, uid) == 0) {
+                        ctx->folder_apps[ctx->folder_app_count++] = ctx->applications[i];
+                        break;
+                    }
+                }
+            }
+            break;
+        }
+    }
+
+    ctx->current_folder = (char *)folder_name;
+    ctx->selected_item  = 0;
+    ctx->scroll_offset  = 0;
+    ctx->total_items    = ctx->folder_app_count;
+}
+
+/* leave_folder — return from folder view to home screen */
+static void leave_folder(Launcher_Context *ctx) {
+    free(ctx->folder_apps);
+    ctx->folder_apps      = NULL;
+    ctx->folder_app_count = 0;
+    ctx->current_folder   = NULL;
+    ctx->selected_item    = ctx->saved_home_selected;
+    ctx->scroll_offset    = ctx->saved_home_scroll;
+    ctx->total_items      = ctx->item_count;
 }
 
 static void handle_keyboard(Launcher_Context *ctx, keyboard_scancode_t key_code) {
     if (ctx->show_about) {
-        if (key_code == KEY_SCANCODE_ESCAPE || key_code == KEY_SCANCODE_RETURN || key_code == KEY_SCANCODE_SPACE) {
+        if (key_code == KEY_SCANCODE_ESCAPE || key_code == KEY_SCANCODE_RETURN ||
+            key_code == KEY_SCANCODE_SPACE) {
             ctx->show_about = false;
         }
         return;
     }
+
+    /* Total items in the currently active list */
+    int total = ctx->total_items;
 
     switch (key_code) {
         case KEY_SCANCODE_UP:
@@ -364,7 +503,7 @@ static void handle_keyboard(Launcher_Context *ctx, keyboard_scancode_t key_code)
             break;
 
         case KEY_SCANCODE_DOWN:
-            if (ctx->selected_item < ctx->total_items - 1) {
+            if (ctx->selected_item < total - 1) {
                 ctx->selected_item++;
                 if (ctx->selected_item >= ctx->scroll_offset + ctx->items_per_page) {
                     ctx->scroll_offset = ctx->selected_item - ctx->items_per_page + 1;
@@ -374,15 +513,40 @@ static void handle_keyboard(Launcher_Context *ctx, keyboard_scancode_t key_code)
 
         case KEY_SCANCODE_RETURN:
         case KEY_SCANCODE_SPACE:
-            printf("Launching: %s\n", ctx->applications[ctx->selected_item]->name);
-            application_launch(ctx->applications[ctx->selected_item]->unique_identifier);
+            if (ctx->current_folder) {
+                /* Folder view — launch selected app */
+                if (ctx->folder_app_count > 0) {
+                    printf("Launching: %s\n",
+                           ctx->folder_apps[ctx->selected_item]->name);
+                    application_launch(
+                        ctx->folder_apps[ctx->selected_item]->unique_identifier);
+                }
+            } else {
+                /* Home view — open folder or launch app */
+                if (ctx->item_count > 0) {
+                    launcher_item_t *item = &ctx->items[ctx->selected_item];
+                    if (item->type == ITEM_FOLDER) {
+                        enter_folder(ctx, item->folder.name);
+                    } else {
+                        printf("Launching: %s\n", item->app->name);
+                        application_launch(item->app->unique_identifier);
+                    }
+                }
+            }
             break;
 
-        case KEY_SCANCODE_A: ctx->show_about = true; break;
+        case KEY_SCANCODE_A:
+            ctx->show_about = true;
+            break;
 
-        case KEY_SCANCODE_ESCAPE: {
-            ctx->quit = true;
-        } break;
+        case KEY_SCANCODE_DELETE:
+        case KEY_SCANCODE_ESCAPE:
+            if (ctx->current_folder) {
+                leave_folder(ctx);
+            } else {
+                ctx->quit = true;
+            }
+            break;
     }
 }
 
@@ -437,6 +601,124 @@ static void draw_boot_screen(
     draw_text_centered(ctx, 0, text_y, SCREEN_WIDTH, status, 0xAAAAAA);
 }
 
+static void build_item_list(Launcher_Context *ctx) {
+    application_t **apps     = ctx->applications;
+    size_t          num_apps = ctx->num_apps;
+
+    /* --- Read and parse apps.json --- */
+    FILE *f = fopen("APPS:[badgevms_launcher]apps.json", "r");
+    cJSON *root = NULL;
+    if (f) {
+        fseek(f, 0, SEEK_END);
+        long sz = ftell(f);
+        rewind(f);
+        if (sz > 0) {
+            char *buf = malloc((size_t)sz + 1);
+            if (buf) {
+                size_t n = fread(buf, 1, (size_t)sz, f);
+                buf[n] = '\0';
+                root = cJSON_Parse(buf);
+                free(buf);
+            }
+        }
+        fclose(f);
+    }
+    if (!root) {
+        printf("build_item_list: apps.json missing or invalid; all apps shown unassigned\n");
+    }
+    cJSON_Delete(ctx->apps_json);
+    ctx->apps_json = root;
+
+    cJSON *items_arr = root ? cJSON_GetObjectItem(root, "items") : NULL;
+
+    /* Track which apps have been assigned a position */
+    bool *seen = calloc(num_apps, sizeof(bool));
+
+    /* Allocate items array (worst case: every installed app + every folder entry) */
+    int max_items = (int)num_apps + (items_arr ? cJSON_GetArraySize(items_arr) : 0);
+    ctx->items = malloc((size_t)(max_items > 0 ? max_items : 1) * sizeof(launcher_item_t));
+    if (!ctx->items) {
+        free(seen);
+        ctx->item_count         = 0;
+        ctx->folder_start_index = -1;
+        ctx->total_items        = 0;
+        return;
+    }
+    ctx->item_count         = 0;
+    ctx->folder_start_index = -1;
+
+    if (items_arr) {
+        cJSON *item_obj;
+        cJSON_ArrayForEach(item_obj, items_arr) {
+            cJSON      *type_j   = cJSON_GetObjectItem(item_obj, "type");
+            const char *type_str = cJSON_GetStringValue(type_j);
+            if (!type_str) continue;
+
+            if (strcmp(type_str, "app") == 0) {
+                cJSON      *uid_j = cJSON_GetObjectItem(item_obj, "uid");
+                const char *uid   = cJSON_GetStringValue(uid_j);
+                if (!uid) continue;
+                for (size_t i = 0; i < num_apps; i++) {
+                    if (strcmp(apps[i]->unique_identifier, uid) == 0) {
+                        launcher_item_t *it = &ctx->items[ctx->item_count++];
+                        it->type = ITEM_APP;
+                        it->app  = apps[i];
+                        if (seen) seen[i] = true;
+                        break;
+                    }
+                }
+
+            } else if (strcmp(type_str, "folder") == 0) {
+                cJSON      *name_j      = cJSON_GetObjectItem(item_obj, "name");
+                cJSON      *apps_j      = cJSON_GetObjectItem(item_obj, "apps");
+                const char *folder_name = cJSON_GetStringValue(name_j);
+                if (!folder_name || !apps_j) continue;
+
+                /* Count installed apps; mark them seen */
+                int installed = 0;
+                cJSON *uid_item;
+                cJSON_ArrayForEach(uid_item, apps_j) {
+                    const char *uid = cJSON_GetStringValue(uid_item);
+                    if (!uid) continue;
+                    for (size_t i = 0; i < num_apps; i++) {
+                        if (strcmp(apps[i]->unique_identifier, uid) == 0) {
+                            if (seen) seen[i] = true;
+                            installed++;
+                            break;
+                        }
+                    }
+                }
+                if (installed == 0) continue; /* no installed apps → hidden */
+
+                if (ctx->folder_start_index < 0)
+                    ctx->folder_start_index = ctx->item_count;
+
+                launcher_item_t *it = &ctx->items[ctx->item_count++];
+                it->type = ITEM_FOLDER;
+                strncpy(it->folder.name, folder_name, sizeof(it->folder.name) - 1);
+                it->folder.name[sizeof(it->folder.name) - 1] = '\0';
+                it->folder.app_count = installed;
+            }
+        }
+    }
+
+    /* Append any installed app not mentioned in apps.json */
+    for (size_t i = 0; i < num_apps; i++) {
+        if (!seen || !seen[i]) {
+            launcher_item_t *it = &ctx->items[ctx->item_count++];
+            it->type = ITEM_APP;
+            it->app  = apps[i];
+        }
+    }
+
+    free(seen);
+
+    ctx->total_items = ctx->item_count;
+    printf("build_item_list: %d home items (%d folders)\n",
+           ctx->item_count,
+           ctx->folder_start_index >= 0 ? ctx->item_count - ctx->folder_start_index : 0);
+}
+
 static bool run_launcher(
     window_handle_t window,
     framebuffer_t  *framebuffer,
@@ -452,15 +734,21 @@ static bool run_launcher(
 
     Launcher_Context ctx = {0};
     ctx.applications     = applications;
-    ctx.total_items      = num;
+    ctx.num_apps         = num;
     ctx.selected_item    = 0;
     ctx.scroll_offset    = 0;
     ctx.show_about       = false;
     ctx.quit             = false;
+    ctx.folder_start_index = -1;
+    ctx.current_folder   = NULL;
+    ctx.apps_json        = NULL;
+    ctx.items            = NULL;
 
     ctx.window      = window;
     ctx.framebuffer = framebuffer;
     ctx.pixels      = framebuffer->pixels;
+
+    build_item_list(&ctx);
     event_t e;
 
     while (!ctx.quit) {
@@ -481,6 +769,10 @@ static bool run_launcher(
             handle_keyboard(&ctx, e.keyboard.scancode);
         }
     }
+
+    free(ctx.items);
+    free(ctx.folder_apps);
+    cJSON_Delete(ctx.apps_json);
 
     return true;
 }

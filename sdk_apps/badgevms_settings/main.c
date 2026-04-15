@@ -5,9 +5,12 @@
 #include <stdlib.h>
 
 #include <badgevms/wifi.h>
+#include <badgevms/application.h>
 #include <SDL3/SDL.h>
 #include <string.h>
 #include <time.h>
+#include "cJSON.h"
+
 
 #define SCREEN_WIDTH  720
 #define SCREEN_HEIGHT 720
@@ -25,7 +28,36 @@
 #define CDE_SUCCESS_COLOR 0x00A000
 #define CDE_ERROR_COLOR   0xA00000
 
-typedef enum { SCREEN_MAIN, SCREEN_WIFI, SCREEN_DISPLAY, SCREEN_SYSTEM, SCREEN_ABOUT } ScreenState;
+typedef enum { SCREEN_MAIN, SCREEN_WIFI, SCREEN_DISPLAY, SCREEN_SYSTEM, SCREEN_ABOUT, SCREEN_REORDER } ScreenState;
+
+#define NAV_STACK_MAX 8
+
+typedef struct {
+    ScreenState screen;
+    int         selected_item;
+    int         scroll_offset;
+} NavEntry;
+
+typedef enum {
+    DIALOG_NONE,
+    DIALOG_NEW_FOLDER,
+    DIALOG_RENAME,
+    DIALOG_DELETE_CONFIRM,
+} reorder_dialog_type_t;
+
+typedef struct {
+    bool   is_folder;
+    char   uid[64];           /* app uid (is_folder == false) */
+    char   display_name[64];  /* app name or folder display name */
+    char **folder_apps;       /* ordered uid list (is_folder == true) */
+    int    folder_app_count;
+    int    folder_app_cap;
+} reorder_item_t;
+
+typedef struct {
+    char uid[64];
+    char name[64];
+} app_name_entry_t;
 
 typedef struct {
     char ssid[64];
@@ -62,6 +94,30 @@ typedef struct {
     char connecting_ssid[64];
     char connection_status_text[128];
     bool connecting_secured;
+
+    NavEntry nav_stack[NAV_STACK_MAX];
+    int      nav_depth;
+
+    /* Reorder screen working state */
+    reorder_item_t       *reorder_items;
+    int                   reorder_item_count;
+    int                   reorder_item_cap;
+    int                   reorder_selected;
+    int                   reorder_scroll;
+    int                   reorder_items_per_page;
+    int                   reorder_held;          /* index of held app, -1 = none */
+    int                   reorder_held_origin;   /* index before grab (for ESC cancel) */
+    bool                  reorder_in_folder;
+    int                   reorder_folder_idx;    /* index in reorder_items[] of open folder */
+    int                   reorder_folder_sel;
+    int                   reorder_folder_scroll;
+    reorder_dialog_type_t reorder_dialog_type;
+    char                  reorder_dialog_buf[64];
+    int                   reorder_dialog_cursor;
+    int                   reorder_rename_idx;    /* folder index for rename/delete dialogs */
+    /* uid→name lookup built during reorder_init */
+    app_name_entry_t     *app_name_table;
+    int                   app_name_count;
 } app_context;
 
 static void render_screen(app_context *ctx);
@@ -212,6 +268,470 @@ static void populate_wifi_networks(app_context *ctx) {
     }
 }
 
+static void nav_push(app_context *ctx, ScreenState screen) {
+    if (ctx->nav_depth < NAV_STACK_MAX) {
+        ctx->nav_stack[ctx->nav_depth].screen        = ctx->current_screen;
+        ctx->nav_stack[ctx->nav_depth].selected_item = ctx->selected_item;
+        ctx->nav_stack[ctx->nav_depth].scroll_offset = ctx->scroll_offset;
+        ctx->nav_depth++;
+    }
+    ctx->current_screen = screen;
+    ctx->selected_item  = 0;
+    ctx->scroll_offset  = 0;
+}
+
+static void nav_pop(app_context *ctx) {
+    if (ctx->nav_depth > 0) {
+        ctx->nav_depth--;
+        ctx->current_screen = ctx->nav_stack[ctx->nav_depth].screen;
+        ctx->selected_item  = ctx->nav_stack[ctx->nav_depth].selected_item;
+        ctx->scroll_offset  = ctx->nav_stack[ctx->nav_depth].scroll_offset;
+    } else {
+        SDL_Event quit_event;
+        quit_event.type = SDL_EVENT_QUIT;
+        SDL_PushEvent(&quit_event);
+    }
+}
+
+/* Grow reorder_items by one and return a pointer to the new zeroed entry. */
+static reorder_item_t *reorder_append(app_context *ctx) {
+    if (ctx->reorder_item_count >= ctx->reorder_item_cap) {
+        int new_cap = ctx->reorder_item_cap == 0 ? 16 : ctx->reorder_item_cap * 2;
+        reorder_item_t *tmp = realloc(ctx->reorder_items,
+                                      (size_t)new_cap * sizeof(reorder_item_t));
+        if (!tmp) return NULL;
+        ctx->reorder_items    = tmp;
+        ctx->reorder_item_cap = new_cap;
+    }
+    reorder_item_t *it = &ctx->reorder_items[ctx->reorder_item_count++];
+    memset(it, 0, sizeof(*it));
+    return it;
+}
+
+/* Append a uid string to a folder's folder_apps list. */
+static void reorder_folder_append(reorder_item_t *folder, const char *uid) {
+    if (folder->folder_app_count >= folder->folder_app_cap) {
+        int new_cap = folder->folder_app_cap == 0 ? 8 : folder->folder_app_cap * 2;
+        char **tmp = realloc(folder->folder_apps, (size_t)new_cap * sizeof(char *));
+        if (!tmp) return;
+        folder->folder_apps    = tmp;
+        folder->folder_app_cap = new_cap;
+    }
+    char *dup = malloc(64);
+    if (!dup) return;
+    strncpy(dup, uid, 63);
+    dup[63] = '\0';
+    folder->folder_apps[folder->folder_app_count++] = dup;
+}
+
+static void reorder_free(app_context *ctx) {
+    if (ctx->reorder_items) {
+        for (int i = 0; i < ctx->reorder_item_count; i++) {
+            reorder_item_t *it = &ctx->reorder_items[i];
+            if (it->is_folder) {
+                for (int j = 0; j < it->folder_app_count; j++)
+                    free(it->folder_apps[j]);
+                free(it->folder_apps);
+            }
+        }
+        free(ctx->reorder_items);
+        ctx->reorder_items      = NULL;
+        ctx->reorder_item_count = 0;
+        ctx->reorder_item_cap   = 0;
+    }
+    free(ctx->app_name_table);
+    ctx->app_name_table  = NULL;
+    ctx->app_name_count  = 0;
+    ctx->reorder_held    = -1;
+    ctx->reorder_in_folder = false;
+    ctx->reorder_dialog_type = DIALOG_NONE;
+}
+
+static void reorder_save(app_context *ctx) {
+    cJSON *root  = cJSON_CreateObject();
+    cJSON *items = cJSON_CreateArray();
+    for (int i = 0; i < ctx->reorder_item_count; i++) {
+        reorder_item_t *it  = &ctx->reorder_items[i];
+        cJSON          *obj = cJSON_CreateObject();
+        if (!it->is_folder) {
+            cJSON_AddStringToObject(obj, "type", "app");
+            cJSON_AddStringToObject(obj, "uid",  it->uid);
+        } else {
+            cJSON_AddStringToObject(obj, "type", "folder");
+            cJSON_AddStringToObject(obj, "name", it->display_name);
+            cJSON *apps_arr = cJSON_CreateArray();
+            for (int j = 0; j < it->folder_app_count; j++)
+                cJSON_AddItemToArray(apps_arr, cJSON_CreateString(it->folder_apps[j]));
+            cJSON_AddItemToObject(obj, "apps", apps_arr);
+        }
+        cJSON_AddItemToArray(items, obj);
+    }
+    cJSON_AddItemToObject(root, "items", items);
+    char *json_str = cJSON_Print(root);
+    cJSON_Delete(root);
+    if (json_str) {
+        FILE *f = fopen("APPS:[badgevms_launcher]apps.json", "w");
+        if (f) { fputs(json_str, f); fclose(f); }
+        free(json_str);
+    }
+}
+
+static void reorder_init(app_context *ctx) {
+    reorder_free(ctx);   /* clear any leftover state */
+
+    ctx->reorder_selected      = 0;
+    ctx->reorder_scroll        = 0;
+    ctx->reorder_held          = -1;
+    ctx->reorder_held_origin   = -1;
+    ctx->reorder_in_folder     = false;
+    ctx->reorder_folder_idx    = -1;
+    ctx->reorder_folder_sel    = 0;
+    ctx->reorder_folder_scroll = 0;
+    ctx->reorder_dialog_type   = DIALOG_NONE;
+
+    /* Build uid→name lookup from installed apps.
+     * Skip badgevms_launcher and why2025_firmware_ota_c6 — they are never shown
+     * in the reorder screen and must not end up in apps.json. */
+    static const char * const SKIP_UIDS[] = {
+        "badgevms_launcher", "why2025_firmware_ota_c6", NULL
+    };
+    application_t          *app;
+    application_list_handle handle = application_list(&app);
+    while (app) {
+        /* Filter out system UIDs that should never appear in the reorder list */
+        bool skip = false;
+        for (int si = 0; SKIP_UIDS[si]; si++) {
+            if (strcmp(app->unique_identifier, SKIP_UIDS[si]) == 0) { skip = true; break; }
+        }
+        if (!skip) {
+            app_name_entry_t *tmp = realloc(ctx->app_name_table,
+                sizeof(app_name_entry_t) * (size_t)(ctx->app_name_count + 1));
+            if (!tmp) break;
+            ctx->app_name_table = tmp;
+            strncpy(ctx->app_name_table[ctx->app_name_count].uid,
+                    app->unique_identifier, 63);
+            ctx->app_name_table[ctx->app_name_count].uid[63] = '\0';
+            strncpy(ctx->app_name_table[ctx->app_name_count].name,
+                    app->name, 63);
+            ctx->app_name_table[ctx->app_name_count].name[63] = '\0';
+            ctx->app_name_count++;
+        }
+        app = application_list_get_next(handle);
+    }
+    /* handle intentionally not closed — pointers stay valid for process lifetime */
+
+    /* Helper: look up display name for a uid */
+    #define LOOKUP_NAME(uid_str, out_name) do { \
+        (out_name)[0] = '\0'; \
+        for (int _i = 0; _i < ctx->app_name_count; _i++) { \
+            if (strcmp(ctx->app_name_table[_i].uid, (uid_str)) == 0) { \
+                strncpy((out_name), ctx->app_name_table[_i].name, 63); \
+                (out_name)[63] = '\0'; \
+                break; \
+            } \
+        } \
+        if (!(out_name)[0]) { strncpy((out_name), (uid_str), 63); (out_name)[63] = '\0'; } \
+    } while(0)
+
+    /* Track which installed apps have been placed */
+    bool *seen = calloc((size_t)ctx->app_name_count, sizeof(bool));
+
+    /* Read and parse apps.json */
+    FILE *f = fopen("APPS:[badgevms_launcher]apps.json", "r");
+    cJSON *root = NULL;
+    if (f) {
+        fseek(f, 0, SEEK_END);
+        long sz = ftell(f);
+        rewind(f);
+        if (sz > 0) {
+            char *buf = malloc((size_t)sz + 1);
+            if (buf) {
+                size_t n = fread(buf, 1, (size_t)sz, f);
+                buf[n] = '\0';
+                root = cJSON_Parse(buf);
+                free(buf);
+            }
+        }
+        fclose(f);
+    }
+
+    if (root) {
+        cJSON *items_arr = cJSON_GetObjectItem(root, "items");
+        if (items_arr) {
+            cJSON *item_obj;
+            cJSON_ArrayForEach(item_obj, items_arr) {
+                cJSON      *type_j   = cJSON_GetObjectItem(item_obj, "type");
+                const char *type_str = cJSON_GetStringValue(type_j);
+                if (!type_str) continue;
+
+                if (strcmp(type_str, "app") == 0) {
+                    const char *uid = cJSON_GetStringValue(cJSON_GetObjectItem(item_obj, "uid"));
+                    if (!uid) continue;
+                    /* Only add if installed */
+                    int installed_idx = -1;
+                    for (int i = 0; i < ctx->app_name_count; i++) {
+                        if (strcmp(ctx->app_name_table[i].uid, uid) == 0) {
+                            installed_idx = i;
+                            break;
+                        }
+                    }
+                    if (installed_idx < 0) continue;
+                    if (seen) seen[installed_idx] = true;
+                    reorder_item_t *it = reorder_append(ctx);
+                    if (!it) continue;
+                    it->is_folder = false;
+                    strncpy(it->uid, uid, 63); it->uid[63] = '\0';
+                    LOOKUP_NAME(uid, it->display_name);
+
+                } else if (strcmp(type_str, "folder") == 0) {
+                    const char *folder_name = cJSON_GetStringValue(
+                        cJSON_GetObjectItem(item_obj, "name"));
+                    cJSON *apps_j = cJSON_GetObjectItem(item_obj, "apps");
+                    if (!folder_name || !apps_j) continue;
+
+                    reorder_item_t *it = reorder_append(ctx);
+                    if (!it) continue;
+                    it->is_folder = true;
+                    strncpy(it->display_name, folder_name, 63);
+                    it->display_name[63] = '\0';
+
+                    cJSON *uid_item;
+                    cJSON_ArrayForEach(uid_item, apps_j) {
+                        const char *uid = cJSON_GetStringValue(uid_item);
+                        if (!uid) continue;
+                        for (int i = 0; i < ctx->app_name_count; i++) {
+                            if (strcmp(ctx->app_name_table[i].uid, uid) == 0) {
+                                if (seen) seen[i] = true;
+                                reorder_folder_append(it, uid);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        cJSON_Delete(root);
+    }
+
+    /* Append any installed apps not seen in apps.json */
+    for (int i = 0; i < ctx->app_name_count; i++) {
+        if (!seen || !seen[i]) {
+            reorder_item_t *it = reorder_append(ctx);
+            if (!it) continue;
+            it->is_folder = false;
+            strncpy(it->uid,          ctx->app_name_table[i].uid,  63); it->uid[63]          = '\0';
+            strncpy(it->display_name, ctx->app_name_table[i].name, 63); it->display_name[63] = '\0';
+        }
+    }
+
+    free(seen);
+    #undef LOOKUP_NAME
+}
+
+static void draw_reorder_dialog(app_context *ctx) {
+    int dialog_w = 500;
+    int dialog_h = (ctx->reorder_dialog_type == DIALOG_DELETE_CONFIRM) ? 200 : 220;
+    int dialog_x = (SCREEN_WIDTH  - dialog_w) / 2;
+    int dialog_y = (SCREEN_HEIGHT - dialog_h) / 2;
+
+    draw_rect(ctx, dialog_x + 5, dialog_y + 5, dialog_w, dialog_h, 0x505050);
+    draw_rect(ctx, dialog_x, dialog_y, dialog_w, dialog_h, CDE_PANEL_COLOR);
+    draw_3d_border(ctx, dialog_x, dialog_y, dialog_w, dialog_h, 0);
+
+    int title_h = 30;
+    draw_rect(ctx, dialog_x + 2, dialog_y + 2, dialog_w - 4, title_h, CDE_TITLE_BG);
+
+    if (ctx->reorder_dialog_type == DIALOG_DELETE_CONFIRM) {
+        draw_text_bold(ctx, dialog_x + 10, dialog_y + 8, "Delete Folder", CDE_SELECTED_TEXT);
+        char msg1[128];
+        snprintf(msg1, sizeof(msg1), "Delete folder '%s'?",
+                 ctx->reorder_items[ctx->reorder_rename_idx].display_name);
+        draw_text(ctx, dialog_x + 20, dialog_y + title_h + 25, msg1, CDE_TEXT_COLOR);
+        draw_text(ctx, dialog_x + 20, dialog_y + title_h + 55,
+                  "All apps will be moved to the home screen.", CDE_INACTIVE_TEXT);
+        draw_text_centered(ctx, dialog_x, dialog_y + dialog_h - 35, dialog_w,
+                           "ENTER: Confirm   ESC: Cancel", CDE_INACTIVE_TEXT);
+    } else {
+        const char *title_text = (ctx->reorder_dialog_type == DIALOG_NEW_FOLDER)
+            ? "New Folder" : "Rename Folder";
+        draw_text_bold(ctx, dialog_x + 10, dialog_y + 8, title_text, CDE_SELECTED_TEXT);
+
+        int cy = dialog_y + title_h + 25;
+        draw_text(ctx, dialog_x + 20, cy, "Folder name:", CDE_TEXT_COLOR);
+
+        int field_x = dialog_x + 20;
+        int field_y = cy + 30;
+        int field_w = dialog_w - 40;
+        int field_h = 35;
+        draw_rect(ctx, field_x, field_y, field_w, field_h, 0xFFFFFF);
+        draw_3d_border(ctx, field_x, field_y, field_w, field_h, 1);
+        draw_text(ctx, field_x + 5, field_y + 7, ctx->reorder_dialog_buf, CDE_TEXT_COLOR);
+        int cursor_x = field_x + 5 + get_text_width(ctx->reorder_dialog_buf);
+        if (SDL_GetTicks() % 1000 < 500)
+            draw_rect(ctx, cursor_x, field_y + 7, 2, FONT_HEIGHT, CDE_TEXT_COLOR);
+
+        draw_text_centered(ctx, dialog_x, dialog_y + dialog_h - 35, dialog_w,
+                           "ENTER: Confirm   ESC: Cancel", CDE_INACTIVE_TEXT);
+    }
+}
+
+static void draw_reorder_screen(app_context *ctx) {
+    int window_x = 30, window_y = 30;
+    int window_w = SCREEN_WIDTH - 60, window_h = SCREEN_HEIGHT - 60;
+
+    draw_rect(ctx, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, CDE_BG_COLOR);
+    draw_rect(ctx, window_x, window_y, window_w, window_h, CDE_PANEL_COLOR);
+    draw_3d_border(ctx, window_x, window_y, window_w, window_h, 0);
+
+    int title_h = 45;
+    draw_rect(ctx, window_x + 3, window_y + 3, window_w - 6, title_h, CDE_TITLE_BG);
+    if (ctx->reorder_in_folder) {
+        char title[128];
+        snprintf(title, sizeof(title), "Reorder Apps > %s",
+                 ctx->reorder_items[ctx->reorder_folder_idx].display_name);
+        draw_text_bold(ctx, window_x + 15, window_y + 11, title, CDE_SELECTED_TEXT);
+    } else {
+        draw_text_bold(ctx, window_x + 15, window_y + 11, "Reorder Apps", CDE_SELECTED_TEXT);
+    }
+
+    int list_y      = window_y + title_h + 15;
+    int list_h      = window_h - title_h - 70;
+    int item_height = 70;
+
+    draw_rect(ctx, window_x + 15, list_y, window_w - 30, list_h, 0xFFFFFF);
+    draw_3d_border(ctx, window_x + 15, list_y, window_w - 30, list_h, 1);
+
+    int ipp = (list_h - 6) / item_height;
+    ctx->reorder_items_per_page = ipp;
+
+    if (ctx->reorder_in_folder) {
+        /* ---- Folder sub-view ---- */
+        reorder_item_t *folder = &ctx->reorder_items[ctx->reorder_folder_idx];
+        int total  = folder->folder_app_count;
+        int scroll = ctx->reorder_folder_scroll;
+        int sel    = ctx->reorder_folder_sel;
+        int ve     = scroll + ipp;
+        if (ve > total) ve = total;
+
+        for (int i = scroll; i < ve; i++) {
+            int item_y = list_y + 3 + (i - scroll) * item_height;
+            int item_x = window_x + 18;
+            int item_w = window_w - 36;
+            bool selected = (i == sel);
+
+            if (selected)
+                draw_rect(ctx, item_x, item_y, item_w, item_height - 2, CDE_SELECTED_BG);
+            uint32_t tc = selected ? CDE_SELECTED_TEXT : CDE_TEXT_COLOR;
+            uint32_t sc = selected ? CDE_SELECTED_TEXT : CDE_INACTIVE_TEXT;
+
+            int icon_x = item_x + 10;
+            int icon_y = item_y + (item_height - 48) / 2;
+            draw_rect(ctx, icon_x, icon_y, 48, 48, selected ? CDE_SELECTED_TEXT : CDE_BUTTON_COLOR);
+            draw_3d_border(ctx, icon_x, icon_y, 48, 48, 1);
+
+            const char *uid = folder->folder_apps[i];
+            const char *name = uid;
+            for (int j = 0; j < ctx->app_name_count; j++) {
+                if (strcmp(ctx->app_name_table[j].uid, uid) == 0) {
+                    name = ctx->app_name_table[j].name;
+                    break;
+                }
+            }
+            int text_x = icon_x + 48 + 15;
+            draw_text_bold(ctx, text_x, item_y + 10, name, tc);
+            draw_text(ctx, text_x, item_y + 35, uid, sc);
+
+            if (i < ve - 1)
+                draw_rect(ctx, item_x, item_y + item_height - 2, item_w, 1, CDE_BORDER_DARK);
+        }
+
+        /* Footer */
+        draw_rect(ctx, window_x + 3, window_y + window_h - 42, window_w - 6, 39, CDE_BUTTON_COLOR);
+        draw_3d_border(ctx, window_x + 3, window_y + window_h - 42, window_w - 6, 39, 1);
+        draw_text(ctx, window_x + 15, window_y + window_h - 35,
+                  "UP/DOWN: Navigate  BACKSPACE: Remove from folder  ESC: Back",
+                  CDE_TEXT_COLOR);
+
+    } else {
+        /* ---- Home view ---- */
+        int total  = ctx->reorder_item_count;
+        int scroll = ctx->reorder_scroll;
+        int sel    = ctx->reorder_selected;
+        int held   = ctx->reorder_held;
+        int ve     = scroll + ipp;
+        if (ve > total) ve = total;
+
+        for (int i = scroll; i < ve; i++) {
+            int item_y = list_y + 3 + (i - scroll) * item_height;
+            int item_x = window_x + 18;
+            int item_w = window_w - 36;
+            reorder_item_t *it = &ctx->reorder_items[i];
+            bool is_sel  = (i == sel);
+            bool is_held = (i == held && held >= 0);
+
+            uint32_t bg = 0;
+            if (is_sel)       bg = CDE_SELECTED_BG;
+            else if (is_held) bg = CDE_TITLE_BG;
+            if (bg) draw_rect(ctx, item_x, item_y, item_w, item_height - 2, bg);
+
+            uint32_t tc = (is_sel || is_held) ? CDE_SELECTED_TEXT : CDE_TEXT_COLOR;
+            uint32_t sc = (is_sel || is_held) ? CDE_SELECTED_TEXT : CDE_INACTIVE_TEXT;
+
+            int icon_x = item_x + 10;
+            int icon_y = item_y + (item_height - 48) / 2;
+            draw_rect(ctx, icon_x, icon_y, 48, 48, (is_sel || is_held) ? CDE_SELECTED_TEXT : CDE_BUTTON_COLOR);
+            draw_3d_border(ctx, icon_x, icon_y, 48, 48, 1);
+
+            /* Show [>] inside icon box for held-but-not-cursor item */
+            if (is_held && !is_sel)
+                draw_text(ctx, icon_x + 8, icon_y + 16, "[>]", CDE_SELECTED_TEXT);
+
+            int text_x = icon_x + 48 + 15;
+            if (it->is_folder) {
+                if (!is_held || is_sel)
+                    draw_text(ctx, icon_x + 8, icon_y + 16, "[F]", tc);
+                draw_text_bold(ctx, text_x, item_y + 10, it->display_name, tc);
+                char sub[48];
+                snprintf(sub, sizeof(sub), "%d app%s",
+                         it->folder_app_count, it->folder_app_count == 1 ? "" : "s");
+                draw_text(ctx, text_x, item_y + 35, sub, sc);
+            } else {
+                draw_text_bold(ctx, text_x, item_y + 10, it->display_name, tc);
+                draw_text(ctx, text_x, item_y + 35, it->uid, sc);
+            }
+
+            if (i < ve - 1)
+                draw_rect(ctx, item_x, item_y + item_height - 2, item_w, 1, CDE_BORDER_DARK);
+        }
+
+        /* Scrollbar */
+        if (total > ipp) {
+            int sbx = window_x + window_w - 35;
+            int sby = list_y + 3;
+            int sbh = list_h - 6;
+            draw_rect(ctx, sbx, sby, 20, sbh, CDE_BUTTON_COLOR);
+            draw_3d_border(ctx, sbx, sby, 20, sbh, 1);
+            int th = (sbh * ipp) / total;
+            if (th < 20) th = 20;
+            int ty = sby + (total > ipp ? ((sbh - th) * scroll) / (total - ipp) : 0);
+            draw_rect(ctx, sbx + 3, ty, 14, th, CDE_PANEL_COLOR);
+            draw_3d_border(ctx, sbx + 3, ty, 14, th, 0);
+        }
+
+        /* Footer */
+        draw_rect(ctx, window_x + 3, window_y + window_h - 42, window_w - 6, 39, CDE_BUTTON_COLOR);
+        draw_3d_border(ctx, window_x + 3, window_y + window_h - 42, window_w - 6, 39, 1);
+        const char *hint = (held >= 0)
+            ? "UP/DOWN: Navigate  ENTER: Drop/Place in folder  ESC: Cancel"
+            : "UP/DOWN: Navigate  ENTER: Grab/Enter  N: New  R: Rename  BACKSPACE: Delete  ESC: Back";
+        draw_text(ctx, window_x + 15, window_y + window_h - 35, hint, CDE_TEXT_COLOR);
+    }
+
+    /* Dialog overlay */
+    if (ctx->reorder_dialog_type != DIALOG_NONE)
+        draw_reorder_dialog(ctx);
+}
+
 static void draw_main_settings(app_context *ctx) {
     int window_x = 30;
     int window_y = 30;
@@ -228,14 +748,13 @@ static void draw_main_settings(app_context *ctx) {
     draw_text_bold(ctx, window_x + 15, window_y + 11, "System Settings", CDE_SELECTED_TEXT);
 
     // char const *categories[]   = {"WiFi Settings", "Display Settings", "System Information", "About"};
-    char const *categories[]   = {"WiFi Settings", "About"};
+    char const *categories[]   = {"WiFi Settings", "Reorder Apps", "About"};
     char const *descriptions[] = {
         "Configure wireless network connection",
-        // "Adjust screen brightness and timeout",
-        // "View system status and diagnostics",
+        "Organise launcher home screen and folders",
         "Application version and credits"
     };
-    ctx->total_items = 2;
+    ctx->total_items = 3;
 
     int list_y      = window_y + title_h + 20;
     int list_h      = window_h - title_h - 80;
@@ -550,6 +1069,292 @@ static void attempt_wifi_connection(app_context *ctx) {
     ctx->network_count = 0;
 }
 
+static void handle_key_reorder(app_context *ctx, SDL_Event *event) {
+    SDL_Keycode key = event->key.key;
+    int ipp = ctx->reorder_items_per_page;
+
+    /* ---- Text input for name dialogs ---- */
+    if (event->type == SDL_EVENT_TEXT_INPUT) {
+        if (ctx->reorder_dialog_type == DIALOG_NEW_FOLDER ||
+            ctx->reorder_dialog_type == DIALOG_RENAME) {
+            int len = (int)strlen(ctx->reorder_dialog_buf);
+            if (len < 63) {
+                strncat(ctx->reorder_dialog_buf, event->text.text, (size_t)(63 - len));
+                ctx->reorder_dialog_cursor = (int)strlen(ctx->reorder_dialog_buf);
+            }
+        }
+        return;
+    }
+
+    /* ---- Active dialog ---- */
+    if (ctx->reorder_dialog_type != DIALOG_NONE) {
+        if (key == SDLK_ESCAPE) {
+            ctx->reorder_dialog_type = DIALOG_NONE;
+            SDL_StopTextInput(ctx->window);
+            return;
+        }
+        if (key == SDLK_BACKSPACE) {
+            int len = (int)strlen(ctx->reorder_dialog_buf);
+            if (len > 0) {
+                ctx->reorder_dialog_buf[len - 1] = '\0';
+                ctx->reorder_dialog_cursor = len - 1;
+            }
+            return;
+        }
+        if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
+            switch (ctx->reorder_dialog_type) {
+
+                case DIALOG_NEW_FOLDER: {
+                    if (ctx->reorder_dialog_buf[0] != '\0') {
+                        reorder_item_t *it = reorder_append(ctx);
+                        if (it) {
+                            it->is_folder = true;
+                            strncpy(it->display_name, ctx->reorder_dialog_buf, 63);
+                            it->display_name[63] = '\0';
+                            reorder_save(ctx);
+                        }
+                    }
+                    break;
+                }
+
+                case DIALOG_RENAME: {
+                    if (ctx->reorder_dialog_buf[0] != '\0') {
+                        strncpy(ctx->reorder_items[ctx->reorder_rename_idx].display_name,
+                                ctx->reorder_dialog_buf, 63);
+                        ctx->reorder_items[ctx->reorder_rename_idx].display_name[63] = '\0';
+                        reorder_save(ctx);
+                    }
+                    break;
+                }
+
+                case DIALOG_DELETE_CONFIRM: {
+                    int idx = ctx->reorder_rename_idx;
+                    reorder_item_t *folder = &ctx->reorder_items[idx];
+
+                    /* Copy folder app uids to temp array before any realloc */
+                    int    n        = folder->folder_app_count;
+                    char **app_uids = malloc((size_t)n * sizeof(char *));
+                    for (int j = 0; j < n; j++) {
+                        app_uids[j] = malloc(64);
+                        if (app_uids[j]) {
+                            strncpy(app_uids[j], folder->folder_apps[j], 63);
+                            app_uids[j][63] = '\0';
+                        }
+                    }
+
+                    /* Free folder's app list then remove folder from items */
+                    for (int j = 0; j < folder->folder_app_count; j++)
+                        free(folder->folder_apps[j]);
+                    free(folder->folder_apps);
+                    memmove(&ctx->reorder_items[idx], &ctx->reorder_items[idx + 1],
+                            (size_t)(ctx->reorder_item_count - idx - 1) * sizeof(reorder_item_t));
+                    ctx->reorder_item_count--;
+
+                    /* Append former folder apps as home-screen entries */
+                    for (int j = 0; j < n; j++) {
+                        if (!app_uids[j]) continue;
+                        reorder_item_t *new_it = reorder_append(ctx);
+                        if (new_it) {
+                            new_it->is_folder = false;
+                            strncpy(new_it->uid, app_uids[j], 63);
+                            new_it->uid[63] = '\0';
+                            new_it->display_name[0] = '\0';
+                            for (int k = 0; k < ctx->app_name_count; k++) {
+                                if (strcmp(ctx->app_name_table[k].uid, app_uids[j]) == 0) {
+                                    strncpy(new_it->display_name,
+                                            ctx->app_name_table[k].name, 63);
+                                    break;
+                                }
+                            }
+                            if (!new_it->display_name[0])
+                                strncpy(new_it->display_name, app_uids[j], 63);
+                        }
+                        free(app_uids[j]);
+                    }
+                    free(app_uids);
+
+                    if (ctx->reorder_selected >= ctx->reorder_item_count &&
+                        ctx->reorder_selected > 0)
+                        ctx->reorder_selected--;
+                    reorder_save(ctx);
+                    break;
+                }
+
+                default: break;
+            }
+            ctx->reorder_dialog_type = DIALOG_NONE;
+            SDL_StopTextInput(ctx->window);
+        }
+        return;
+    }
+
+    /* ---- Folder sub-view ---- */
+    if (ctx->reorder_in_folder) {
+        reorder_item_t *folder = &ctx->reorder_items[ctx->reorder_folder_idx];
+        int total = folder->folder_app_count;
+
+        if (key == SDLK_UP) {
+            if (ctx->reorder_folder_sel > 0) {
+                ctx->reorder_folder_sel--;
+                if (ctx->reorder_folder_sel < ctx->reorder_folder_scroll)
+                    ctx->reorder_folder_scroll = ctx->reorder_folder_sel;
+            }
+        } else if (key == SDLK_DOWN) {
+            if (ctx->reorder_folder_sel < total - 1) {
+                ctx->reorder_folder_sel++;
+                if (ctx->reorder_folder_sel >= ctx->reorder_folder_scroll + ipp)
+                    ctx->reorder_folder_scroll = ctx->reorder_folder_sel - ipp + 1;
+            }
+        } else if (key == SDLK_BACKSPACE) {
+            if (total > 0) {
+                int sel_f = ctx->reorder_folder_sel;
+                char uid[64];
+                strncpy(uid, folder->folder_apps[sel_f], 63); uid[63] = '\0';
+
+                /* Remove app from folder */
+                free(folder->folder_apps[sel_f]);
+                memmove(&folder->folder_apps[sel_f], &folder->folder_apps[sel_f + 1],
+                        (size_t)(folder->folder_app_count - sel_f - 1) * sizeof(char *));
+                folder->folder_app_count--;
+
+                /* Append as home entry (may realloc; re-fetch folder pointer after) */
+                reorder_item_t *new_it = reorder_append(ctx);
+                folder = &ctx->reorder_items[ctx->reorder_folder_idx]; /* re-fetch */
+                if (new_it) {
+                    new_it->is_folder = false;
+                    strncpy(new_it->uid, uid, 63); new_it->uid[63] = '\0';
+                    new_it->display_name[0] = '\0';
+                    for (int k = 0; k < ctx->app_name_count; k++) {
+                        if (strcmp(ctx->app_name_table[k].uid, uid) == 0) {
+                            strncpy(new_it->display_name, ctx->app_name_table[k].name, 63);
+                            break;
+                        }
+                    }
+                    if (!new_it->display_name[0]) strncpy(new_it->display_name, uid, 63);
+                }
+
+                if (ctx->reorder_folder_sel >= folder->folder_app_count &&
+                    ctx->reorder_folder_sel > 0)
+                    ctx->reorder_folder_sel--;
+                reorder_save(ctx);
+            }
+        } else if (key == SDLK_ESCAPE) {
+            ctx->reorder_in_folder = false;
+        }
+        return;
+    }
+
+    /* ---- Home view ---- */
+    int total = ctx->reorder_item_count;
+    int sel   = ctx->reorder_selected;
+    int held  = ctx->reorder_held;
+
+    if (key == SDLK_UP) {
+        if (sel > 0) {
+            ctx->reorder_selected--;
+            if (ctx->reorder_selected < ctx->reorder_scroll)
+                ctx->reorder_scroll = ctx->reorder_selected;
+        }
+    } else if (key == SDLK_DOWN) {
+        if (sel < total - 1) {
+            ctx->reorder_selected++;
+            if (ctx->reorder_selected >= ctx->reorder_scroll + ipp)
+                ctx->reorder_scroll = ctx->reorder_selected - ipp + 1;
+        }
+    } else if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
+        if (held >= 0) {
+            int H = held, D = sel;
+            if (D == H) {
+                /* Drop in place */
+                ctx->reorder_held = -1;
+                reorder_save(ctx);
+            } else if (total > 0 && ctx->reorder_items[D].is_folder) {
+                /* Move held app into folder */
+                char held_uid[64];
+                strncpy(held_uid, ctx->reorder_items[H].uid, 63); held_uid[63] = '\0';
+                memmove(&ctx->reorder_items[H], &ctx->reorder_items[H + 1],
+                        (size_t)(ctx->reorder_item_count - H - 1) * sizeof(reorder_item_t));
+                ctx->reorder_item_count--;
+                int fidx = D > H ? D - 1 : D;
+                reorder_folder_append(&ctx->reorder_items[fidx], held_uid);
+                if (ctx->reorder_selected >= ctx->reorder_item_count && ctx->reorder_selected > 0)
+                    ctx->reorder_selected--;
+                ctx->reorder_held = -1;
+                reorder_save(ctx);
+            } else {
+                /* Reorder: move item from H to D */
+                reorder_item_t held_item = ctx->reorder_items[H];
+                memmove(&ctx->reorder_items[H], &ctx->reorder_items[H + 1],
+                        (size_t)(ctx->reorder_item_count - H - 1) * sizeof(reorder_item_t));
+                ctx->reorder_item_count--;
+                int insert_at = D > H ? D - 1 : D;
+                memmove(&ctx->reorder_items[insert_at + 1], &ctx->reorder_items[insert_at],
+                        (size_t)(ctx->reorder_item_count - insert_at) * sizeof(reorder_item_t));
+                ctx->reorder_items[insert_at] = held_item;
+                ctx->reorder_item_count++;
+                ctx->reorder_selected = insert_at;
+                ctx->reorder_held     = -1;
+                reorder_save(ctx);
+            }
+        } else {
+            if (total > 0) {
+                if (ctx->reorder_items[sel].is_folder) {
+                    ctx->reorder_in_folder     = true;
+                    ctx->reorder_folder_idx    = sel;
+                    ctx->reorder_folder_sel    = 0;
+                    ctx->reorder_folder_scroll = 0;
+                } else {
+                    ctx->reorder_held        = sel;
+                    ctx->reorder_held_origin = sel;
+                }
+            }
+        }
+    } else if (key == SDLK_N) {
+        if (held < 0) {
+            ctx->reorder_dialog_type   = DIALOG_NEW_FOLDER;
+            ctx->reorder_dialog_buf[0] = '\0';
+            ctx->reorder_dialog_cursor = 0;
+            SDL_FlushEvent(SDL_EVENT_TEXT_INPUT);
+        }
+    } else if (key == SDLK_R) {
+        if (held < 0 && total > 0 && ctx->reorder_items[sel].is_folder) {
+            ctx->reorder_dialog_type = DIALOG_RENAME;
+            ctx->reorder_rename_idx  = sel;
+            strncpy(ctx->reorder_dialog_buf, ctx->reorder_items[sel].display_name, 63);
+            ctx->reorder_dialog_buf[63] = '\0';
+            ctx->reorder_dialog_cursor  = (int)strlen(ctx->reorder_dialog_buf);
+            SDL_FlushEvent(SDL_EVENT_TEXT_INPUT);
+        }
+    } else if (key == SDLK_BACKSPACE) {
+        if (held < 0 && total > 0 && ctx->reorder_items[sel].is_folder) {
+            ctx->reorder_dialog_type = DIALOG_DELETE_CONFIRM;
+            ctx->reorder_rename_idx  = sel;
+        }
+    } else if (key == SDLK_ESCAPE) {
+        if (held >= 0) {
+            /* Cancel grab — restore item to its original position */
+            int H      = held;
+            int origin = ctx->reorder_held_origin;
+            if (H != origin) {
+                reorder_item_t held_item = ctx->reorder_items[H];
+                memmove(&ctx->reorder_items[H], &ctx->reorder_items[H + 1],
+                        (size_t)(ctx->reorder_item_count - H - 1) * sizeof(reorder_item_t));
+                ctx->reorder_item_count--;
+                int insert_at = origin > H ? origin - 1 : origin;
+                memmove(&ctx->reorder_items[insert_at + 1], &ctx->reorder_items[insert_at],
+                        (size_t)(ctx->reorder_item_count - insert_at) * sizeof(reorder_item_t));
+                ctx->reorder_items[insert_at] = held_item;
+                ctx->reorder_item_count++;
+                ctx->reorder_selected = insert_at;
+            }
+            ctx->reorder_held = -1;
+        } else {
+            reorder_free(ctx);
+            nav_pop(ctx);
+        }
+    }
+}
+
 static void handle_key_event(app_context *ctx, SDL_Event *event) {
     SDL_Keycode key = event->key.key;
 
@@ -586,19 +1391,15 @@ static void handle_key_event(app_context *ctx, SDL_Event *event) {
                     ctx->selected_item++;
             } else if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
                 switch (ctx->selected_item) {
-                    case 0: ctx->current_screen = SCREEN_WIFI; break;
+                    case 0: nav_push(ctx, SCREEN_WIFI); break;
                     case 1:
-                        ctx->current_screen = SCREEN_ABOUT;
+                        reorder_init(ctx);
+                        nav_push(ctx, SCREEN_REORDER);
                         break;
-                        // case 1: ctx->current_screen = SCREEN_DISPLAY; break;
-                        // case 2: ctx->current_screen = SCREEN_SYSTEM; break;
+                    case 2: nav_push(ctx, SCREEN_ABOUT); break;
                 }
-                ctx->selected_item = 0;
-                ctx->scroll_offset = 0;
             } else if (key == SDLK_ESCAPE) {
-                SDL_Event quit_event;
-                quit_event.type = SDL_EVENT_QUIT;
-                SDL_PushEvent(&quit_event);
+                nav_pop(ctx);
             }
             break;
 
@@ -630,23 +1431,23 @@ static void handle_key_event(app_context *ctx, SDL_Event *event) {
             } else if (key == SDLK_S) {
                 ctx->network_count = 0;
             } else if (key == SDLK_ESCAPE) {
-                ctx->current_screen = SCREEN_MAIN;
-                ctx->selected_item  = 0;
-                ctx->scroll_offset  = 0;
+                nav_pop(ctx);
             }
             break;
 
         case SCREEN_ABOUT:
             if (key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_ESCAPE) {
-                ctx->current_screen = SCREEN_MAIN;
-                ctx->selected_item  = 1;
+                nav_pop(ctx);
             }
+            break;
+
+        case SCREEN_REORDER:
+            handle_key_reorder(ctx, event);
             break;
 
         default:
             if (key == SDLK_ESCAPE) {
-                ctx->current_screen = SCREEN_MAIN;
-                ctx->selected_item  = 0;
+                nav_pop(ctx);
             }
             break;
     }
@@ -672,6 +1473,7 @@ static void render_screen(app_context *ctx) {
             draw_main_settings(ctx);
             draw_about_dialog(ctx);
             break;
+        case SCREEN_REORDER: draw_reorder_screen(ctx); break;
     }
 
     SDL_UpdateTexture(ctx->texture, NULL, ctx->pixels, SCREEN_WIDTH * sizeof(uint16_t));
@@ -731,6 +1533,7 @@ int main(int argc, char *argv[]) {
     ctx.current_screen = SCREEN_MAIN;
     ctx.selected_item  = 0;
     ctx.scroll_offset  = 0;
+    ctx.nav_depth      = 0;
 
     SDL_StartTextInput(ctx.window);
 
@@ -745,6 +1548,10 @@ int main(int argc, char *argv[]) {
                 case SDL_EVENT_TEXT_INPUT:
                     if (ctx.show_password_dialog) {
                         handle_key_event(&ctx, &event);
+                    } else if (ctx.current_screen == SCREEN_REORDER &&
+                               ctx.reorder_dialog_type != DIALOG_NONE &&
+                               ctx.reorder_dialog_type != DIALOG_DELETE_CONFIRM) {
+                        handle_key_reorder(&ctx, &event);
                     }
                     break;
             }

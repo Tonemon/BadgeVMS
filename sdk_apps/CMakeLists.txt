@@ -126,6 +126,9 @@ endfunction()
 # Core apps
 #
 
+file(READ "${CMAKE_SOURCE_DIR}/version.txt" _BADGEVMS_VERSION_RAW)
+string(STRIP "${_BADGEVMS_VERSION_RAW}" BADGEVMS_VERSION)
+
 # Old OTA updater preinstalled at handout, doesn't build anymore due to api changes
 #build_app(ota_wifi_update
 #    SOURCES
@@ -148,11 +151,15 @@ build_app(badgevms_launcher PREINSTALL
     SOURCES
      main.c
      image.c
+     cJSON.c
+    COMPILE_DEFINITIONS
+     "BADGEVMS_VERSION=${BADGEVMS_VERSION}"
 )
 
 build_app(badgevms_settings PREINSTALL
     SOURCES
      main.c
+     cJSON.c
     LIBRARIES
      sdl3
 )

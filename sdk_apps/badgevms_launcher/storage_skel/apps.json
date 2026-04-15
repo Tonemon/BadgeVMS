@@ -1,0 +1,14 @@
+{
+  "items": [
+    { "type": "app",    "uid": "why2025_namebadge" },
+    { "type": "app",    "uid": "why2025_sponsors" },
+    { "type": "folder", "name": "Games",       "apps": ["sdl_test", "sdl2_test", "doomgeneric"] },
+    { "type": "folder", "name": "System",      "apps": ["badgevms_settings", "why2025_ota"] },
+    { "type": "folder", "name": "Diagnostics", "apps": [
+        "hello", "test_hardware", "memtester", "bench_basic_a", "bench_basic_b",
+        "test_appdb", "test_bmi270", "test_bme690", "test_curl",
+        "test_framebuffer", "test_process", "test_readdir",
+        "test_socket", "test_thread", "test_wifi"
+    ]}
+  ]
+}
