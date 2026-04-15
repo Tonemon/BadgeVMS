@@ -159,6 +159,7 @@ build_app(badgevms_launcher PREINSTALL
 build_app(badgevms_settings PREINSTALL
     SOURCES
      main.c
+     cJSON.c
     LIBRARIES
      sdl3
 )
