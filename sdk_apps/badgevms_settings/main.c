@@ -1314,7 +1314,7 @@ static void handle_key_reorder(app_context *ctx, SDL_Event *event) {
             ctx->reorder_dialog_type   = DIALOG_NEW_FOLDER;
             ctx->reorder_dialog_buf[0] = '\0';
             ctx->reorder_dialog_cursor = 0;
-            SDL_StartTextInput(ctx->window);
+            SDL_FlushEvent(SDL_EVENT_TEXT_INPUT);
         }
     } else if (key == SDLK_R) {
         if (held < 0 && total > 0 && ctx->reorder_items[sel].is_folder) {
@@ -1323,7 +1323,7 @@ static void handle_key_reorder(app_context *ctx, SDL_Event *event) {
             strncpy(ctx->reorder_dialog_buf, ctx->reorder_items[sel].display_name, 63);
             ctx->reorder_dialog_buf[63] = '\0';
             ctx->reorder_dialog_cursor  = (int)strlen(ctx->reorder_dialog_buf);
-            SDL_StartTextInput(ctx->window);
+            SDL_FlushEvent(SDL_EVENT_TEXT_INPUT);
         }
     } else if (key == SDLK_BACKSPACE) {
         if (held < 0 && total > 0 && ctx->reorder_items[sel].is_folder) {
