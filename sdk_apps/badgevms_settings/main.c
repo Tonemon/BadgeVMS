@@ -1007,7 +1007,7 @@ static void draw_password_dialog(app_context *ctx) {
 }
 
 static void draw_about_dialog(app_context *ctx) {
-    int dialog_w = 520;
+    int dialog_w = 620;
     int dialog_h = 350;
     int dialog_x = (SCREEN_WIDTH  - dialog_w) / 2;
     int dialog_y = (SCREEN_HEIGHT - dialog_h) / 2;
@@ -1018,20 +1018,15 @@ static void draw_about_dialog(app_context *ctx) {
 
     int title_h = 30;
     draw_rect(ctx, dialog_x + 2, dialog_y + 2, dialog_w - 4, title_h, CDE_TITLE_BG);
-    draw_text_bold(ctx, dialog_x + 10, dialog_y + 8, "About this Badge", CDE_SELECTED_TEXT);
+    draw_text_bold(ctx, dialog_x + 10, dialog_y + 8, "About the WHY2025 Badge", CDE_SELECTED_TEXT);
 
     int x  = dialog_x + 20;
     int lh = FONT_HEIGHT + 6;
     int y  = dialog_y + title_h + 12;
 
-    draw_text_centered(ctx, dialog_x, y, dialog_w, "WHY2025 Badge", CDE_TEXT_COLOR);
-    y += FONT_HEIGHT + 8;
-    draw_rect(ctx, dialog_x + 15, y, dialog_w - 30, 1, CDE_BORDER_DARK);
-    y += 10;
-
     draw_text_bold(ctx, x, y, "Compute Unit", CDE_SELECTED_TEXT);
     y += lh;
-    draw_text(ctx, x + 12, y, "ESP32-P4  -  Main processor, fast and flexible", CDE_TEXT_COLOR);
+    draw_text(ctx, x + 12, y, "ESP32-P4  -  Main processor", CDE_TEXT_COLOR);
     y += lh + 6;
 
     draw_text_bold(ctx, x, y, "Carrier Board", CDE_SELECTED_TEXT);
@@ -1043,6 +1038,8 @@ static void draw_about_dialog(app_context *ctx) {
     draw_text(ctx, x + 12, y, "BMI270    -  Accelerometer & gyroscope", CDE_TEXT_COLOR);
     y += lh;
     draw_text(ctx, x + 12, y, "BME690    -  Air quality, temperature, humidity", CDE_TEXT_COLOR);
+    y += lh;
+    draw_text(ctx, x + 12, y, "SD Slot   -  Additional storage", CDE_TEXT_COLOR);
     y += lh + 6;
 
     draw_rect(ctx, dialog_x + 15, y, dialog_w - 30, 1, CDE_BORDER_DARK);
