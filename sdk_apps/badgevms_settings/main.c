@@ -118,6 +118,19 @@ typedef struct {
     /* uid→name lookup built during reorder_init */
     app_name_entry_t     *app_name_table;
     int                   app_name_count;
+
+    /* Launcher config (read from APPS:[badgevms_launcher]config.json) */
+    bool  launch_default_app;
+    char  launcher_default_uid[64];   /* UID of default app */
+    char  launcher_default_name[64];  /* display name, looked up via application_list */
+
+    /* App-chooser dialog (opened from "Default app" settings entry) */
+    bool              show_app_chooser;
+    app_name_entry_t *chooser_apps;
+    int               chooser_app_count;
+    int               chooser_selected;
+    int               chooser_scroll;
+    int               chooser_items_per_page;
 } app_context;
 
 static void render_screen(app_context *ctx);
@@ -732,6 +745,72 @@ static void draw_reorder_screen(app_context *ctx) {
         draw_reorder_dialog(ctx);
 }
 
+static void launcher_config_load(app_context *ctx) {
+    ctx->launch_default_app      = false;
+    ctx->launcher_default_uid[0] = '\0';
+    ctx->launcher_default_name[0] = '\0';
+
+    FILE *f = fopen("APPS:[badgevms_launcher]config.json", "r");
+    if (!f) return;
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    rewind(f);
+    if (sz <= 0 || sz > 4096) { fclose(f); return; }
+    char *buf = malloc((size_t)sz + 1);
+    if (!buf) { fclose(f); return; }
+    size_t n = fread(buf, 1, (size_t)sz, f);
+    buf[n] = '\0';
+    fclose(f);
+
+    cJSON *cfg = cJSON_Parse(buf);
+    free(buf);
+    if (!cfg) return;
+
+    cJSON *lda = cJSON_GetObjectItem(cfg, "launch_default_app");
+    cJSON *da  = cJSON_GetObjectItem(cfg, "default_app");
+    if (cJSON_IsBool(lda))
+        ctx->launch_default_app = cJSON_IsTrue(lda);
+    if (cJSON_IsString(da) && da->valuestring)
+        strncpy(ctx->launcher_default_uid, da->valuestring,
+                sizeof(ctx->launcher_default_uid) - 1);
+    cJSON_Delete(cfg);
+
+    /* Resolve display name by walking the installed app list.
+     * We avoid application_get()+application_free() because application_free
+     * is not exported in the BadgeVMS runtime symbol table. */
+    if (ctx->launcher_default_uid[0]) {
+        application_t          *a;
+        application_list_handle h = application_list(&a);
+        while (a) {
+            if (a->unique_identifier &&
+                strcmp(a->unique_identifier, ctx->launcher_default_uid) == 0) {
+                if (a->name)
+                    strncpy(ctx->launcher_default_name, a->name,
+                            sizeof(ctx->launcher_default_name) - 1);
+                break;
+            }
+            a = application_list_get_next(h);
+        }
+        application_list_close(h);
+        /* Fall back to uid if display name not found */
+        if (!ctx->launcher_default_name[0])
+            strncpy(ctx->launcher_default_name, ctx->launcher_default_uid,
+                    sizeof(ctx->launcher_default_name) - 1);
+    }
+}
+
+static void launcher_config_save(app_context *ctx) {
+    cJSON *cfg = cJSON_CreateObject();
+    cJSON_AddBoolToObject(cfg, "launch_default_app", ctx->launch_default_app);
+    cJSON_AddStringToObject(cfg, "default_app", ctx->launcher_default_uid);
+    char *json_str = cJSON_Print(cfg);
+    cJSON_Delete(cfg);
+    if (!json_str) return;
+    FILE *f = fopen("APPS:[badgevms_launcher]config.json", "w");
+    if (f) { fputs(json_str, f); fclose(f); }
+    free(json_str);
+}
+
 static void draw_main_settings(app_context *ctx) {
     int window_x = 30;
     int window_y = 30;
@@ -747,14 +826,21 @@ static void draw_main_settings(app_context *ctx) {
     draw_rect(ctx, window_x + 3, window_y + 3, window_w - 6, title_h, CDE_TITLE_BG);
     draw_text_bold(ctx, window_x + 15, window_y + 11, "System Settings", CDE_SELECTED_TEXT);
 
-    // char const *categories[]   = {"WiFi Settings", "Display Settings", "System Information", "About"};
-    char const *categories[]   = {"WiFi Settings", "Reorder Apps", "About"};
+    char const *categories[]   = {
+        "WiFi Settings",
+        "Reorder Apps",
+        "Launch default app",
+        "Default app",
+        "About"
+    };
     char const *descriptions[] = {
         "Configure wireless network connection",
         "Organise launcher home screen and folders",
+        "Launch an application at startup",
+        "The application launched at boot",
         "Application version and credits"
     };
-    ctx->total_items = 3;
+    ctx->total_items = 5;
 
     int list_y      = window_y + title_h + 20;
     int list_h      = window_h - title_h - 80;
@@ -786,6 +872,26 @@ static void draw_main_settings(app_context *ctx) {
         int text_x = icon_x + icon_size + 15;
         draw_text_bold(ctx, text_x, item_y + 15, categories[i], text_color);
         draw_text(ctx, text_x, item_y + 45, descriptions[i], desc_color);
+
+        /* Right-side value for config entries */
+        if (i == 2) { /* Launch default app: show [ON] or [OFF] */
+            const char *toggle_str = ctx->launch_default_app ? "[ON] " : "[OFF]";
+            int toggle_w = get_text_width(toggle_str);
+            int toggle_x = item_x + item_w - toggle_w - 15;
+            uint32_t toggle_color;
+            if (i == ctx->selected_item)
+                toggle_color = CDE_SELECTED_TEXT;
+            else
+                toggle_color = ctx->launch_default_app ? CDE_SUCCESS_COLOR : CDE_INACTIVE_TEXT;
+            draw_text_bold(ctx, toggle_x, item_y + 15, toggle_str, toggle_color);
+        } else if (i == 3) { /* Default app: show app display name */
+            const char *app_name = ctx->launcher_default_name[0]
+                ? ctx->launcher_default_name : "(none)";
+            int name_w = get_text_width(app_name);
+            int name_x = item_x + item_w - name_w - 15;
+            uint32_t name_color = (i == ctx->selected_item) ? CDE_SELECTED_TEXT : CDE_INACTIVE_TEXT;
+            draw_text(ctx, name_x, item_y + 15, app_name, name_color);
+        }
 
         if (i < ctx->total_items - 1) {
             draw_rect(ctx, item_x, item_y + item_height - 2, item_w, 1, CDE_BORDER_DARK);
@@ -1414,7 +1520,13 @@ static void handle_key_event(app_context *ctx, SDL_Event *event) {
                         reorder_init(ctx);
                         nav_push(ctx, SCREEN_REORDER);
                         break;
-                    case 2: nav_push(ctx, SCREEN_ABOUT); break;
+                    case 2: /* Launch default app: toggle bool and save */
+                        ctx->launch_default_app = !ctx->launch_default_app;
+                        launcher_config_save(ctx);
+                        break;
+                    case 3: /* Default app: open chooser (implemented in Task 4) */
+                        break;
+                    case 4: nav_push(ctx, SCREEN_ABOUT); break;
                 }
             } else if (key == SDLK_ESCAPE) {
                 nav_pop(ctx);
@@ -1552,6 +1664,7 @@ int main(int argc, char *argv[]) {
     ctx.selected_item  = 0;
     ctx.scroll_offset  = 0;
     ctx.nav_depth      = 0;
+    launcher_config_load(&ctx);
 
     SDL_StartTextInput(ctx.window);
 
