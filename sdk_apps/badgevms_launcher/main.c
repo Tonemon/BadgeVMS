@@ -895,7 +895,7 @@ int main(int argc, char *argv[]) {
                     memset(pixels, 0,
                            SCREEN_WIDTH * SCREEN_HEIGHT * sizeof(uint16_t));
                     window_present(window, true, NULL, 0);
-                    done = wait(true, 100); /* block up to 100 ms */
+                    done = wait(false, 100); /* wait up to 100 ms, then loop */
                 } while (done != child_pid);
                 printf("Launcher: default app exited\n");
             } else {
