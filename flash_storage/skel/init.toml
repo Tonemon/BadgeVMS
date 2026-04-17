@@ -1,8 +1,0 @@
-[[apps]]
-name = "sponsors"
-application = "why2025_sponsors"
-path = "APPS:[why2025_sponsors]why2025_sponsors.elf"
-restart_on_failure = false
-stack_size = 16384
-run_once = true
-#args = ["--boot"]
