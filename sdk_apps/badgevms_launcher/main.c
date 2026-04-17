@@ -852,7 +852,60 @@ int main(int argc, char *argv[]) {
     if (logo_data)
         stbi_image_free(logo_data);
 
-    /* 7. Hand off to launcher with pre-created window and scanned app list */
+    /* 7. Read config.json and optionally launch the default app */
+    {
+        bool launch_default_app  = false;
+        char default_app_uid[64] = {0};
+
+        FILE *cfg_f = fopen("APPS:[badgevms_launcher]config.json", "r");
+        if (cfg_f) {
+            fseek(cfg_f, 0, SEEK_END);
+            long cfg_sz = ftell(cfg_f);
+            rewind(cfg_f);
+            if (cfg_sz > 0 && cfg_sz < 4096) {
+                char *cfg_buf = malloc((size_t)cfg_sz + 1);
+                if (cfg_buf) {
+                    size_t cfg_n = fread(cfg_buf, 1, (size_t)cfg_sz, cfg_f);
+                    cfg_buf[cfg_n] = '\0';
+                    cJSON *cfg_json = cJSON_Parse(cfg_buf);
+                    free(cfg_buf);
+                    if (cfg_json) {
+                        cJSON *lda = cJSON_GetObjectItem(cfg_json, "launch_default_app");
+                        cJSON *da  = cJSON_GetObjectItem(cfg_json, "default_app");
+                        if (cJSON_IsBool(lda) && cJSON_IsTrue(lda))
+                            launch_default_app = true;
+                        if (cJSON_IsString(da) && da->valuestring)
+                            strncpy(default_app_uid, da->valuestring,
+                                    sizeof(default_app_uid) - 1);
+                        cJSON_Delete(cfg_json);
+                    }
+                }
+            }
+            fclose(cfg_f);
+        }
+
+        if (launch_default_app && default_app_uid[0]) {
+            printf("Launcher: launching default app '%s'\n", default_app_uid);
+            pid_t child_pid = application_launch(default_app_uid);
+            if (child_pid > 0) {
+                printf("Launcher: waiting for default app pid %d to exit\n", child_pid);
+                uint16_t *pixels = framebuffer->pixels;
+                pid_t     done;
+                do {
+                    memset(pixels, 0,
+                           SCREEN_WIDTH * SCREEN_HEIGHT * sizeof(uint16_t));
+                    window_present(window, true, NULL, 0);
+                    done = wait(true, 100); /* block up to 100 ms */
+                } while (done != child_pid);
+                printf("Launcher: default app exited\n");
+            } else {
+                printf("Launcher: failed to launch default app '%s'\n",
+                       default_app_uid);
+            }
+        }
+    }
+
+    /* 8. Hand off to launcher with pre-created window and scanned app list */
     run_launcher(window, framebuffer, g_scan_apps, g_scan_count);
 
     return 0;
