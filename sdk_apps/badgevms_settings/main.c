@@ -134,6 +134,7 @@ typedef struct {
 } app_context;
 
 static void render_screen(app_context *ctx);
+static void app_chooser_close(app_context *ctx);
 
 static inline uint16_t rgb888_to_rgb565_color(uint32_t rgb888) {
     uint8_t r = (rgb888 >> 16) & 0xFF;

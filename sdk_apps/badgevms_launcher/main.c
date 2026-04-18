@@ -889,14 +889,16 @@ int main(int argc, char *argv[]) {
             pid_t child_pid = application_launch(default_app_uid);
             if (child_pid > 0) {
                 printf("Launcher: waiting for default app pid %d to exit\n", child_pid);
-                uint16_t *pixels = framebuffer->pixels;
+                uint16_t *pixels    = framebuffer->pixels;
                 pid_t     done;
+                int       wait_iters = 0;
                 do {
                     memset(pixels, 0,
                            SCREEN_WIDTH * SCREEN_HEIGHT * sizeof(uint16_t));
                     window_present(window, true, NULL, 0);
                     done = wait(false, 100); /* wait up to 100 ms, then loop */
-                } while (done != child_pid);
+                    wait_iters++;
+                } while (done != child_pid && wait_iters < 600); /* 60 s max */
                 printf("Launcher: default app exited\n");
             } else {
                 printf("Launcher: failed to launch default app '%s'\n",
