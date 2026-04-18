@@ -801,6 +801,7 @@ static void launcher_config_load(app_context *ctx) {
 
 static void launcher_config_save(app_context *ctx) {
     cJSON *cfg = cJSON_CreateObject();
+    if (!cfg) return;
     cJSON_AddBoolToObject(cfg, "launch_default_app", ctx->launch_default_app);
     cJSON_AddStringToObject(cfg, "default_app", ctx->launcher_default_uid);
     char *json_str = cJSON_Print(cfg);
