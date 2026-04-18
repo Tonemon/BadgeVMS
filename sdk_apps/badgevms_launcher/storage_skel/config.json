@@ -1,4 +1,7 @@
 {
-  "launch_default_app": true,
-  "default_app": "why2025_sponsors"
+  "launch_default_app": false,
+  "default_app": "why2025_sponsors",
+  "hostname": "why2025badge.lan",
+  "badge_owner_name": "John",
+  "display_username_at_boot": false
 }

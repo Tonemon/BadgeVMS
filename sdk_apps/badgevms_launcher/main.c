@@ -557,7 +557,8 @@ static void draw_boot_screen(
     int               logo_h,
     int               logo_ch,
     float             bright,
-    int               dot_count
+    int               dot_count,
+    const char       *owner_name  /* NULL or "" for default text */
 ) {
     if (bright > 1.0f) bright = 1.0f;
     if (bright < 0.0f) bright = 0.0f;
@@ -591,8 +592,11 @@ static void draw_boot_screen(
 
     /* Draw animated status text below the logo */
     static char const *dots[] = {"", ".", "..", "..."};
-    char status[48];
-    snprintf(status, sizeof(status), "Initializing WHY2025 badge%s", dots[dot_count & 3]);
+    char status[96];
+    if (owner_name && owner_name[0])
+        snprintf(status, sizeof(status), "Initializing %s's badge%s", owner_name, dots[dot_count & 3]);
+    else
+        snprintf(status, sizeof(status), "Initializing WHY2025 badge%s", dots[dot_count & 3]);
 
     int logo_top    = (logo_data && logo_ch >= 3) ? dest_y : SCREEN_HEIGHT / 2 - 40;
     int logo_bottom = logo_top + ((logo_data && logo_ch >= 3) ? logo_h : 0);
@@ -823,7 +827,39 @@ int main(int argc, char *argv[]) {
         scan_thread(NULL);
     }
 
-    /* 5. Boot animation loop — runs until scan done AND 2000 ms elapsed */
+    /* 5. Read badge identity from config for boot screen (non-fatal) */
+    char boot_owner_name[64]  = {0};
+    bool boot_display_name    = false;
+    {
+        FILE *cfg_f = fopen("APPS:[badgevms_launcher]config.json", "r");
+        if (cfg_f) {
+            fseek(cfg_f, 0, SEEK_END);
+            long cfg_sz = ftell(cfg_f);
+            rewind(cfg_f);
+            if (cfg_sz > 0 && cfg_sz < 4096) {
+                char *cfg_buf = malloc((size_t)cfg_sz + 1);
+                if (cfg_buf) {
+                    size_t cfg_n = fread(cfg_buf, 1, (size_t)cfg_sz, cfg_f);
+                    cfg_buf[cfg_n] = '\0';
+                    cJSON *cfg = cJSON_Parse(cfg_buf);
+                    free(cfg_buf);
+                    if (cfg) {
+                        cJSON *dub = cJSON_GetObjectItem(cfg, "display_username_at_boot");
+                        cJSON *bon = cJSON_GetObjectItem(cfg, "badge_owner_name");
+                        if (cJSON_IsBool(dub) && cJSON_IsTrue(dub))
+                            boot_display_name = true;
+                        if (cJSON_IsString(bon) && bon->valuestring)
+                            strncpy(boot_owner_name, bon->valuestring,
+                                    sizeof(boot_owner_name) - 1);
+                        cJSON_Delete(cfg);
+                    }
+                }
+            }
+            fclose(cfg_f);
+        }
+    }
+
+    /* 6. Boot animation loop — runs until scan done AND 2000 ms elapsed */
     Launcher_Context boot_ctx = {0};
     boot_ctx.pixels = framebuffer->pixels;
 
@@ -839,7 +875,8 @@ int main(int argc, char *argv[]) {
         float bright    = 0.875f + 0.125f * sinf(2.0f * (float)M_PI * elapsed_ms / 2000.0f);
         int   dot_count = (int)(elapsed_ms / 500) % 4;
 
-        draw_boot_screen(&boot_ctx, logo_data, logo_w, logo_h, logo_ch, bright, dot_count);
+        draw_boot_screen(&boot_ctx, logo_data, logo_w, logo_h, logo_ch, bright, dot_count,
+                         boot_display_name ? boot_owner_name : NULL);
         window_present(window, true, NULL, 0);
 
         if (atomic_load(&g_scan_done) && elapsed_ms >= 2000)
@@ -848,11 +885,11 @@ int main(int argc, char *argv[]) {
         usleep(33 * 1000); /* ~30 fps */
     }
 
-    /* 6. Clean up logo pixels — no longer needed */
+    /* 7. Clean up logo pixels — no longer needed */
     if (logo_data)
         stbi_image_free(logo_data);
 
-    /* 7. Read config.json and optionally launch the default app */
+    /* 8. Read config.json and optionally launch the default app */
     {
         bool launch_default_app  = false;
         char default_app_uid[64] = {0};
@@ -907,7 +944,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    /* 8. Hand off to launcher with pre-created window and scanned app list */
+    /* 9. Hand off to launcher with pre-created window and scanned app list */
     run_launcher(window, framebuffer, g_scan_apps, g_scan_count);
 
     return 0;
