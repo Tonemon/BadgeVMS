@@ -79,6 +79,7 @@ static int           s_retry_num = 0;
 static wifi_status_t status;
 static TaskHandle_t  hermes_handle;
 static QueueHandle_t hermes_queue;
+static esp_netif_t  *s_sta_netif = NULL;
 
 static EventGroupHandle_t           wifi_event_group;
 static esp_event_handler_instance_t instance_any_id;
@@ -601,13 +602,39 @@ static void start_wifi() {
         esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL, &instance_got_ip)
     );
 
-    esp_netif_t *sta_netif = esp_netif_create_default_wifi_sta();
-    assert(sta_netif);
+    s_sta_netif = esp_netif_create_default_wifi_sta();
+    assert(s_sta_netif);
+
+    /* Apply persisted hostname, falling back to the compiled-in default */
+    {
+        char hostname[128] = CONFIG_LWIP_LOCAL_HOSTNAME;
+        nvs_handle_t nvs;
+        if (nvs_open("badgevms_sys", NVS_READONLY, &nvs) == ESP_OK) {
+            size_t sz = sizeof(hostname);
+            nvs_get_str(nvs, "hostname", hostname, &sz);
+            nvs_close(nvs);
+        }
+        esp_netif_set_hostname(s_sta_netif, hostname);
+    }
+
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_start());
+}
+
+void wifi_set_hostname(char const *hostname) {
+    if (!hostname || hostname[0] == '\0')
+        return;
+    nvs_handle_t nvs;
+    if (nvs_open("badgevms_sys", NVS_READWRITE, &nvs) == ESP_OK) {
+        nvs_set_str(nvs, "hostname", hostname);
+        nvs_commit(nvs);
+        nvs_close(nvs);
+    }
+    if (s_sta_netif)
+        esp_netif_set_hostname(s_sta_netif, hostname);
 }
 
 device_t *wifi_create() {
