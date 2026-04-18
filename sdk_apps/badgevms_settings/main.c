@@ -957,7 +957,7 @@ static void draw_main_settings(app_context *ctx) {
         "Organise launcher home screen and folders",
         "Launch an application at startup",
         "The application launched at boot",
-        "Application version and credits"
+        "Badge specifications"
     };
     ctx->total_items = 5;
 
@@ -1252,6 +1252,8 @@ static void draw_about_dialog(app_context *ctx) {
     draw_text_bold(ctx, x, y, "Compute Unit", CDE_SELECTED_TEXT);
     y += lh;
     draw_text(ctx, x + 12, y, "ESP32-P4  -  Main processor", CDE_TEXT_COLOR);
+    y += lh;
+    draw_text(ctx, x + 12, y, "SD Slot   -  Additional storage", CDE_TEXT_COLOR);
     y += lh + 6;
 
     draw_text_bold(ctx, x, y, "Carrier Board", CDE_SELECTED_TEXT);
