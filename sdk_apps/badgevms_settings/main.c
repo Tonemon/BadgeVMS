@@ -745,6 +745,61 @@ static void draw_reorder_screen(app_context *ctx) {
         draw_reorder_dialog(ctx);
 }
 
+static void app_chooser_open(app_context *ctx) {
+    /* Populate chooser_apps from installed app list, excluding the launcher itself */
+    ctx->chooser_app_count = 0;
+    ctx->chooser_apps      = NULL;
+
+    application_t          *app;
+    application_list_handle handle = application_list(&app);
+    while (app) {
+        if (app->unique_identifier &&
+            strcmp(app->unique_identifier, "badgevms_launcher") != 0 &&
+            app->binary_path && strlen(app->binary_path) > 0) {
+
+            app_name_entry_t *tmp = realloc(ctx->chooser_apps,
+                (size_t)(ctx->chooser_app_count + 1) * sizeof(app_name_entry_t));
+            if (tmp) {
+                ctx->chooser_apps = tmp;
+                strncpy(ctx->chooser_apps[ctx->chooser_app_count].uid,
+                        app->unique_identifier,
+                        sizeof(ctx->chooser_apps[0].uid) - 1);
+                ctx->chooser_apps[ctx->chooser_app_count].uid[sizeof(ctx->chooser_apps[0].uid) - 1] = '\0';
+                strncpy(ctx->chooser_apps[ctx->chooser_app_count].name,
+                        app->name ? app->name : app->unique_identifier,
+                        sizeof(ctx->chooser_apps[0].name) - 1);
+                ctx->chooser_apps[ctx->chooser_app_count].name[sizeof(ctx->chooser_apps[0].name) - 1] = '\0';
+                ctx->chooser_app_count++;
+            }
+        }
+        app = application_list_get_next(handle);
+    }
+    application_list_close(handle);
+
+    /* Pre-select the currently configured app, if present */
+    ctx->chooser_selected = 0;
+    for (int i = 0; i < ctx->chooser_app_count; i++) {
+        if (strcmp(ctx->chooser_apps[i].uid, ctx->launcher_default_uid) == 0) {
+            ctx->chooser_selected = i;
+            break;
+        }
+    }
+    ctx->chooser_scroll          = 0;
+    ctx->chooser_items_per_page  = 8;
+    /* Scroll so pre-selected item is visible */
+    if (ctx->chooser_selected >= ctx->chooser_items_per_page)
+        ctx->chooser_scroll = ctx->chooser_selected - ctx->chooser_items_per_page + 1;
+
+    ctx->show_app_chooser = true;
+}
+
+static void app_chooser_close(app_context *ctx) {
+    free(ctx->chooser_apps);
+    ctx->chooser_apps      = NULL;
+    ctx->chooser_app_count = 0;
+    ctx->show_app_chooser  = false;
+}
+
 static void launcher_config_load(app_context *ctx) {
     ctx->launch_default_app      = false;
     ctx->launcher_default_uid[0] = '\0';
@@ -810,6 +865,65 @@ static void launcher_config_save(app_context *ctx) {
     FILE *f = fopen("APPS:[badgevms_launcher]config.json", "w");
     if (f) { fputs(json_str, f); fclose(f); }
     free(json_str);
+}
+
+static void draw_app_chooser_dialog(app_context *ctx) {
+    int dialog_w = 500;
+    int dialog_h = 420;
+    int dialog_x = (SCREEN_WIDTH  - dialog_w) / 2;
+    int dialog_y = (SCREEN_HEIGHT - dialog_h) / 2;
+
+    /* Drop shadow */
+    draw_rect(ctx, dialog_x + 5, dialog_y + 5, dialog_w, dialog_h, 0x505050);
+
+    /* Panel */
+    draw_rect(ctx, dialog_x, dialog_y, dialog_w, dialog_h, CDE_PANEL_COLOR);
+    draw_3d_border(ctx, dialog_x, dialog_y, dialog_w, dialog_h, 0);
+
+    /* Title bar */
+    int title_h = 30;
+    draw_rect(ctx, dialog_x + 2, dialog_y + 2, dialog_w - 4, title_h, CDE_TITLE_BG);
+    draw_text_bold(ctx, dialog_x + 10, dialog_y + 8, "Select Default App", CDE_SELECTED_TEXT);
+
+    /* App list */
+    int list_x      = dialog_x + 10;
+    int list_y      = dialog_y + title_h + 8;
+    int list_w      = dialog_w - 20;
+    int list_h      = dialog_h - title_h - 50;
+    int item_height = 40;
+    ctx->chooser_items_per_page = list_h / item_height;
+
+    draw_rect(ctx, list_x, list_y, list_w, list_h, 0xFFFFFF);
+    draw_3d_border(ctx, list_x, list_y, list_w, list_h, 1);
+
+    int visible_start = ctx->chooser_scroll;
+    int visible_end   = visible_start + ctx->chooser_items_per_page;
+    if (visible_end > ctx->chooser_app_count)
+        visible_end = ctx->chooser_app_count;
+
+    for (int i = visible_start; i < visible_end; i++) {
+        int row_y = list_y + 3 + (i - visible_start) * item_height;
+        int row_x = list_x + 3;
+        int row_w = list_w - 6;
+
+        bool selected = (i == ctx->chooser_selected);
+        if (selected)
+            draw_rect(ctx, row_x, row_y, row_w, item_height - 2, CDE_SELECTED_BG);
+
+        uint32_t text_color = selected ? CDE_SELECTED_TEXT : CDE_TEXT_COLOR;
+        draw_text_bold(ctx, row_x + 8, row_y + 10, ctx->chooser_apps[i].name, text_color);
+
+        if (i < visible_end - 1)
+            draw_rect(ctx, row_x, row_y + item_height - 2, row_w, 1, CDE_BORDER_DARK);
+    }
+
+    /* Footer */
+    int footer_y = dialog_y + dialog_h - 38;
+    draw_rect(ctx, dialog_x + 2, footer_y, dialog_w - 4, 36, CDE_BUTTON_COLOR);
+    draw_3d_border(ctx, dialog_x + 2, footer_y, dialog_w - 4, 36, 1);
+    draw_text(ctx, dialog_x + 10, footer_y + 8,
+              "UP/DOWN: Navigate  ENTER: Select  ESC: Cancel",
+              CDE_TEXT_COLOR);
 }
 
 static void draw_main_settings(app_context *ctx) {
@@ -1480,8 +1594,49 @@ static void handle_key_reorder(app_context *ctx, SDL_Event *event) {
     }
 }
 
+static void handle_key_app_chooser(app_context *ctx, SDL_Keycode key) {
+    if (ctx->chooser_app_count == 0) {
+        if (key == SDLK_ESCAPE || key == SDLK_RETURN || key == SDLK_KP_ENTER)
+            app_chooser_close(ctx);
+        return;
+    }
+
+    if (key == SDLK_UP) {
+        if (ctx->chooser_selected > 0) {
+            ctx->chooser_selected--;
+            if (ctx->chooser_selected < ctx->chooser_scroll)
+                ctx->chooser_scroll = ctx->chooser_selected;
+        }
+    } else if (key == SDLK_DOWN) {
+        if (ctx->chooser_selected < ctx->chooser_app_count - 1) {
+            ctx->chooser_selected++;
+            if (ctx->chooser_selected >= ctx->chooser_scroll + ctx->chooser_items_per_page)
+                ctx->chooser_scroll = ctx->chooser_selected - ctx->chooser_items_per_page + 1;
+        }
+    } else if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
+        /* Save selection */
+        strncpy(ctx->launcher_default_uid,
+                ctx->chooser_apps[ctx->chooser_selected].uid,
+                sizeof(ctx->launcher_default_uid) - 1);
+        ctx->launcher_default_uid[sizeof(ctx->launcher_default_uid) - 1] = '\0';
+        strncpy(ctx->launcher_default_name,
+                ctx->chooser_apps[ctx->chooser_selected].name,
+                sizeof(ctx->launcher_default_name) - 1);
+        ctx->launcher_default_name[sizeof(ctx->launcher_default_name) - 1] = '\0';
+        launcher_config_save(ctx);
+        app_chooser_close(ctx);
+    } else if (key == SDLK_ESCAPE) {
+        app_chooser_close(ctx);
+    }
+}
+
 static void handle_key_event(app_context *ctx, SDL_Event *event) {
     SDL_Keycode key = event->key.key;
+
+    if (ctx->show_app_chooser) {
+        handle_key_app_chooser(ctx, key);
+        return;
+    }
 
     if (ctx->show_password_dialog) {
         if (key == SDLK_ESCAPE) {
@@ -1525,7 +1680,8 @@ static void handle_key_event(app_context *ctx, SDL_Event *event) {
                         ctx->launch_default_app = !ctx->launch_default_app;
                         launcher_config_save(ctx);
                         break;
-                    case 3: /* Default app: open chooser (implemented in Task 4) */
+                    case 3: /* Default app: open chooser */
+                        app_chooser_open(ctx);
                         break;
                     case 4: nav_push(ctx, SCREEN_ABOUT); break;
                 }
@@ -1588,7 +1744,11 @@ static void render_screen(app_context *ctx) {
     memset(ctx->pixels, 0, SCREEN_WIDTH * SCREEN_HEIGHT * sizeof(uint16_t));
 
     switch (ctx->current_screen) {
-        case SCREEN_MAIN: draw_main_settings(ctx); break;
+        case SCREEN_MAIN:
+            draw_main_settings(ctx);
+            if (ctx->show_app_chooser)
+                draw_app_chooser_dialog(ctx);
+            break;
         case SCREEN_WIFI:
             draw_wifi_settings(ctx);
             if (ctx->show_password_dialog) {
@@ -1697,6 +1857,7 @@ int main(int argc, char *argv[]) {
     SDL_StopTextInput(ctx.window);
     free(ctx.pixels);
     free(ctx.networks);
+    free(ctx.chooser_apps);
     SDL_DestroyTexture(ctx.texture);
     SDL_DestroyRenderer(ctx.renderer);
     SDL_DestroyWindow(ctx.window);
