@@ -746,6 +746,8 @@ static void draw_reorder_screen(app_context *ctx) {
 }
 
 static void app_chooser_open(app_context *ctx) {
+    app_chooser_close(ctx); /* free any prior allocation if called while open */
+
     /* Populate chooser_apps from installed app list, excluding the launcher itself */
     ctx->chooser_app_count = 0;
     ctx->chooser_apps      = NULL;
@@ -755,6 +757,7 @@ static void app_chooser_open(app_context *ctx) {
     while (app) {
         if (app->unique_identifier &&
             strcmp(app->unique_identifier, "badgevms_launcher") != 0 &&
+            strcmp(app->unique_identifier, "why2025_firmware_ota_c6") != 0 &&
             app->binary_path && strlen(app->binary_path) > 0) {
 
             app_name_entry_t *tmp = realloc(ctx->chooser_apps,
