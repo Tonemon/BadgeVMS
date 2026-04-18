@@ -1265,8 +1265,6 @@ static void draw_about_dialog(app_context *ctx) {
     draw_text(ctx, x + 12, y, "BMI270    -  Accelerometer & gyroscope", CDE_TEXT_COLOR);
     y += lh;
     draw_text(ctx, x + 12, y, "BME690    -  Air quality, temperature, humidity", CDE_TEXT_COLOR);
-    y += lh;
-    draw_text(ctx, x + 12, y, "SD Slot   -  Additional storage", CDE_TEXT_COLOR);
     y += lh + 6;
 
     draw_rect(ctx, dialog_x + 15, y, dialog_w - 30, 1, CDE_BORDER_DARK);
