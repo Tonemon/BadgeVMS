@@ -948,18 +948,16 @@ static void draw_main_settings(app_context *ctx) {
     char const *categories[]   = {
         "WiFi Settings",
         "Reorder Apps",
-        "Launch default app",
         "Default app",
         "About"
     };
     char const *descriptions[] = {
         "Configure wireless network connection",
         "Organise launcher home screen and folders",
-        "Launch an application at startup",
         "The application launched at boot",
         "Badge specifications"
     };
-    ctx->total_items = 5;
+    ctx->total_items = 4;
 
     int list_y      = window_y + title_h + 20;
     int list_h      = window_h - title_h - 80;
@@ -992,18 +990,19 @@ static void draw_main_settings(app_context *ctx) {
         draw_text_bold(ctx, text_x, item_y + 15, categories[i], text_color);
         draw_text(ctx, text_x, item_y + 45, descriptions[i], desc_color);
 
-        /* Right-side value for config entries */
-        if (i == 2) { /* Launch default app: show [ON] or [OFF] */
-            const char *toggle_str = ctx->launch_default_app ? "[ON] " : "[OFF]";
-            int toggle_w = get_text_width(toggle_str);
-            int toggle_x = item_x + item_w - toggle_w - 15;
-            uint32_t toggle_color;
+        if (i == 2) { /* Default app: inline [ON]/[OFF] toggle + right-side app name */
+            /* Toggle drawn inline after title, separated by two spaces */
+            int         title_w    = get_text_width(categories[i]);
+            int         toggle_x   = text_x + title_w + 2 * FONT_WIDTH;
+            const char *toggle_str = ctx->launch_default_app ? "[ON]" : "[OFF]";
+            uint32_t    toggle_color;
             if (i == ctx->selected_item)
                 toggle_color = CDE_SELECTED_TEXT;
             else
                 toggle_color = ctx->launch_default_app ? CDE_SUCCESS_COLOR : CDE_INACTIVE_TEXT;
             draw_text_bold(ctx, toggle_x, item_y + 15, toggle_str, toggle_color);
-        } else if (i == 3) { /* Default app: show app display name */
+
+            /* App name right-aligned */
             const char *app_name = ctx->launcher_default_name[0]
                 ? ctx->launcher_default_name : "(none)";
             int name_w = get_text_width(app_name);
@@ -1017,15 +1016,13 @@ static void draw_main_settings(app_context *ctx) {
         }
     }
 
+    /* Footer hint — includes SPACE: Toggle when "Default app" is selected */
+    const char *footer_hint = (ctx->selected_item == 2)
+        ? "UP/DOWN: Navigate  ENTER: Choose  SPACE: Toggle  ESC: Exit"
+        : "UP/DOWN: Navigate  ENTER: Select  ESC: Exit";
     draw_rect(ctx, window_x + 3, window_y + window_h - 42, window_w - 6, 39, CDE_BUTTON_COLOR);
     draw_3d_border(ctx, window_x + 3, window_y + window_h - 42, window_w - 6, 39, 1);
-    draw_text(
-        ctx,
-        window_x + 15,
-        window_y + window_h - 35,
-        "UP/DOWN: Navigate  ENTER: Select  ESC: Exit",
-        CDE_TEXT_COLOR
-    );
+    draw_text(ctx, window_x + 15, window_y + window_h - 35, footer_hint, CDE_TEXT_COLOR);
 }
 
 static void draw_wifi_settings(app_context *ctx) {
@@ -1680,14 +1677,15 @@ static void handle_key_event(app_context *ctx, SDL_Event *event) {
                         reorder_init(ctx);
                         nav_push(ctx, SCREEN_REORDER);
                         break;
-                    case 2: /* Launch default app: toggle bool and save */
-                        ctx->launch_default_app = !ctx->launch_default_app;
-                        launcher_config_save(ctx);
-                        break;
-                    case 3: /* Default app: open chooser */
+                    case 2: /* Default app: open chooser */
                         app_chooser_open(ctx);
                         break;
-                    case 4: nav_push(ctx, SCREEN_ABOUT); break;
+                    case 3: nav_push(ctx, SCREEN_ABOUT); break;
+                }
+            } else if (key == SDLK_SPACE) {
+                if (ctx->selected_item == 2) {
+                    ctx->launch_default_app = !ctx->launch_default_app;
+                    launcher_config_save(ctx);
                 }
             } else if (key == SDLK_ESCAPE) {
                 nav_pop(ctx);
