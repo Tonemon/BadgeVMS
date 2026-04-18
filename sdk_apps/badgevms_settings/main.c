@@ -898,6 +898,9 @@ static void launcher_config_save(app_context *ctx) {
     FILE *f = fopen("APPS:[badgevms_launcher]config.json", "w");
     if (f) { fputs(json_str, f); fclose(f); }
     free(json_str);
+
+    /* Push the hostname into the network stack immediately */
+    wifi_set_hostname(ctx->hostname);
 }
 
 static void draw_app_chooser_dialog(app_context *ctx) {

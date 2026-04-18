@@ -9,7 +9,7 @@
         "test_framebuffer", "test_process", "test_readdir",
         "test_socket", "test_thread", "test_wifi"
     ]},
-    { "type": "app",    "uid": "badgevms_settings" },
-    { "type": "app",    "uid": "why2025_ota" }
+    { "type": "app",    "uid": "why2025_ota" },
+    { "type": "app",    "uid": "badgevms_settings" }
   ]
 }
