@@ -148,70 +148,56 @@ These files have firmware-specific logic and remain as overrides:
 
 ## Current Status
 
-| Component | Status |
-|---|---|
-| `hal` | **Complete** — stale files deleted, all known API drift fixed |
-| `esp_hw_support` | **Complete** — SPM rename, io_mux, GDMA, esp_cpu all fixed |
-| `esp_psram` | **Complete** — mspi additions done |
-| `esp_driver_ppa` | **In progress** — two errors remain (see below) |
-| `esp_lcd` | **Unknown** — not yet reached in build |
-| `freertos` | **Unknown** — not yet reached in build |
-| `esp_http_client` | **Unknown** — likely low drift (stable API surface) |
-| `esp-tls` | **Unknown** — likely low drift (stable API surface) |
+**Build result: `Project build complete` — all 8 components compile and link cleanly.**
 
-### Remaining blocking errors
+| Component | Status | Fixes Applied |
+|---|---|---|
+| `hal` | **Complete** | Stale files deleted, chip rev fixed, all API drift resolved |
+| `esp_hw_support` | **Complete** | SPM rename, io_mux, GDMA, esp_cpu all fixed |
+| `esp_psram` | **Complete** | mspi additions done |
+| `esp_driver_ppa` | **Complete** | `ppa_srm.c`: constants → `ppa_ll_srm_get_dma_dscr_port_mode_block_size()`; `ppa_fill.c`: added `color_mode` arg to `ppa_ll_blend_configure_filling_block()` |
+| `esp_lcd` | **Complete** | parl: `parlio_private.h` → `parlio_tx_private.h`; i80/rgb: `lcd_ll_enable_interrupt()` wrapped in `PERIPH_RCC_ATOMIC()`; dsi/bus: PHY clock API split; dsi/dpi: renamed underrun event + color range function |
+| `freertos` | **Complete** | Added `xPortFPUContextIsDirty()` (FPU sleep retention); added `hp_system_reg.h` include for ESP32-P4; added two OpenOCD debug table entries |
+| `esp_http_client` | **No drift** | API surface unchanged across 299 commits |
+| `esp-tls` | **No drift** | API surface unchanged across 299 commits |
 
-**`components/esp_driver_ppa/src/ppa_srm.c`:**
-```c
-.block_h = (srm_trans_desc->in.srm_cm == PPA_SRM_COLOR_MODE_YUV420)
-    ? PPA_LL_SRM_YUV420_BLOCK_SIZE : PPA_LL_SRM_DEFAULT_BLOCK_SIZE,
-```
-`PPA_LL_SRM_YUV420_BLOCK_SIZE` and `PPA_LL_SRM_DEFAULT_BLOCK_SIZE` are LL-level
-constants added in IDF 5.5.4. Need to check IDF's `ppa_ll.h` for values and either
-define them in the firmware's ppa_ll.h or update ppa_srm.c.
+### Resolved blocking errors (all fixed)
 
-**`components/esp_driver_ppa/src/ppa_fill.c`:**
-```c
-// Firmware calls:
-ppa_ll_blend_configure_filling_block(platform->hal.dev,
-    &fill_trans_desc->fill_argb_color,
-    fill_trans_desc->fill_block_w,
-    fill_trans_desc->fill_block_h);
+| File | Error | Fix |
+|---|---|---|
+| `ppa_srm.c` | `PPA_LL_SRM_YUV420_BLOCK_SIZE` undeclared | Replaced with `ppa_ll_srm_get_dma_dscr_port_mode_block_size()` |
+| `ppa_fill.c` | `ppa_ll_blend_configure_filling_block` wrong arg count | Added `fill_cm` as second argument |
+| `esp_lcd_panel_io_parl.c` | `parlio_private.h` not found | Changed to `parlio_tx_private.h` |
+| `esp_lcd_panel_io_i80.c` | `__DECLARE_RCC_ATOMIC_ENV` undeclared | Wrapped `lcd_ll_enable_interrupt()` in `PERIPH_RCC_ATOMIC()` |
+| `esp_lcd_panel_rgb.c` | `__DECLARE_RCC_ATOMIC_ENV` undeclared | Wrapped `lcd_ll_enable_interrupt()` in `PERIPH_RCC_ATOMIC()` |
+| `esp_lcd_mipi_dsi_bus.c` | `mipi_dsi_ll_enable_phy_reference_clock` undeclared | Renamed to `mipi_dsi_ll_enable_phy_pllref_clock` |
+| `esp_lcd_mipi_dsi_bus.c` | `mipi_dsi_ll_set_phy_clock_source` undeclared | Replaced with split API: `set_phy_config_clock_source` + `set_phy_pllref_clock_source` + `set_phy_pll_ref_clock_div` |
+| `esp_lcd_panel_dpi.c` | `MIPI_DSI_LL_EVENT_UNDERRUN` undeclared | Renamed to `MIPI_DSI_BRG_LL_EVENT_UNDERRUN` |
+| `esp_lcd_panel_dpi.c` | `mipi_dsi_brg_ll_set_input_color_space` undeclared | Renamed to `mipi_dsi_brg_ll_set_input_color_range` |
 
-// IDF 5.5.4 signature:
-void ppa_ll_blend_configure_filling_block(ppa_dev_t *dev,
-    ppa_fill_color_mode_t color_mode,
-    void *data,
-    uint32_t hb, uint32_t vb);
-```
-A `color_mode` parameter was added as the second argument. The call site needs
-to pass the appropriate color mode and confirm the `data` semantics match.
+### Latent runtime fix
+
+**`freertos/port.c` missing `xPortFPUContextIsDirty()`:**
+IDF 5.5.4 added this function for FPU register retention during light sleep
+(guards: `SOC_CPU_COPROC_NUM > 0 && SOC_CPU_HAS_FPU && SOC_PM_FPU_RETENTION_BY_SW`,
+all true for ESP32-P4). Without it, the badge would crash on any light sleep
+cycle where a task had used the FPU. Added to `port.c` and declared in `portmacro.h`.
 
 ---
 
-## Effort Estimate
-
-Estimating against the 299 IDF commits of drift:
+## Effort Summary
 
 | Area | Fraction of drift | Status |
 |---|---|---|
-| hal (stale file cleanup + type/API fixes) | ~40% | Done |
-| esp_hw_support | ~15% | Done |
-| esp_psram | ~5% | Done |
-| esp_driver_ppa | ~15% | ~50% done |
-| esp_lcd | ~15% | Not started |
-| freertos, esp_http_client, esp-tls | ~10% | Not started |
+| hal (stale file cleanup + type/API fixes) | ~40% | Complete |
+| esp_hw_support | ~15% | Complete |
+| esp_psram | ~5% | Complete |
+| esp_driver_ppa | ~15% | Complete |
+| esp_lcd | ~15% | Complete |
+| freertos | ~8% | Complete |
+| esp_http_client, esp-tls | ~2% | No changes needed |
 
-**Rough estimate: ~60-65% of the total reconciliation work is complete.**
-
-The hal cleanup was the largest single chunk — not because it had the most API changes,
-but because it required identifying and deleting ~145 stale files, building the CMakeLists
-fallback mechanism, and then fixing a dozen API drift points across the remaining kept files.
-
-The remaining work (esp_driver_ppa tail, esp_lcd, freertos) will surface errors only
-when the build progresses far enough to compile those components. esp_lcd and freertos
-may have significant drift given their complexity, but their API surfaces are also more
-stable than the low-level HAL and hardware support layers.
+**100% of the IDF 5.5.4 compatibility reconciliation is complete.**
 
 ---
 
