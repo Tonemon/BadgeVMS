@@ -6,7 +6,10 @@ set(includes "platform_port/include")
 
 # Firmware-specific overrides take priority; IDF's target HAL provides everything else.
 # The "include_next" directive in efuse_hal.h requires target-specific paths before generic.
-list(APPEND includes "${target}/include")
+# Only add the local target/include if it actually exists (it may be empty/absent after cleanup).
+if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/${target}/include")
+    list(APPEND includes "${target}/include")
+endif()
 list(APPEND includes "$ENV{IDF_PATH}/components/hal/${target}/include")
 
 list(APPEND includes "include")
