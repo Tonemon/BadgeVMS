@@ -51,12 +51,14 @@ esp_err_t esp_lcd_new_dsi_bus(const esp_lcd_dsi_bus_config_t *bus_config, esp_lc
     esp_clk_tree_enable_src((soc_module_clk_t)phy_clk_src, true);
     // enable the clock source for DSI PHY
     DSI_CLOCK_SRC_ATOMIC() {
-        // set clock source for DSI PHY
-        mipi_dsi_ll_set_phy_clock_source(bus_id, phy_clk_src);
+        // set the DSI PHY configuration clock
+        mipi_dsi_ll_set_phy_config_clock_source(bus_id, MIPI_DSI_PHY_CFG_CLK_SRC_DEFAULT);
         // the configuration clock is used for all modes except the shutdown mode
         mipi_dsi_ll_enable_phy_config_clock(bus_id, true);
-        // enable the clock for generating the serial clock
-        mipi_dsi_ll_enable_phy_reference_clock(bus_id, true);
+        // set the DSI PHY PLL reference clock source and enable it
+        mipi_dsi_ll_set_phy_pllref_clock_source(bus_id, phy_clk_src);
+        mipi_dsi_ll_set_phy_pll_ref_clock_div(bus_id, 1); // no division
+        mipi_dsi_ll_enable_phy_pllref_clock(bus_id, true);
     }
 
 #if CONFIG_PM_ENABLE
@@ -136,7 +138,7 @@ esp_err_t esp_lcd_del_dsi_bus(esp_lcd_dsi_bus_handle_t bus)
     int bus_id = bus->bus_id;
     // disable the clock source for DSI PHY
     DSI_CLOCK_SRC_ATOMIC() {
-        mipi_dsi_ll_enable_phy_reference_clock(bus_id, false);
+        mipi_dsi_ll_enable_phy_pllref_clock(bus_id, false);
         mipi_dsi_ll_enable_phy_config_clock(bus_id, false);
     }
     // disable the APB clock for accessing the DSI peripheral registers
