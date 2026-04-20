@@ -56,6 +56,9 @@
 #include "portmacro.h"
 #include "port_systick.h"
 #include "esp_memory_utils.h"
+#if CONFIG_IDF_TARGET_ESP32P4
+#include "soc/hp_system_reg.h"
+#endif
 
 #if SOC_CPU_HAS_HWLOOP
 #include "riscv/csr.h"
@@ -877,6 +880,13 @@ void vPortCoprocUsedInISR(void* frame)
     g_panic_abort_details = (char *) "ERROR: Coprocessors must not be used in ISRs!\n";
     xt_unhandled_exception(frame);
 }
+
+#if (SOC_CPU_COPROC_NUM > 0) && SOC_CPU_HAS_FPU && SOC_PM_FPU_RETENTION_BY_SW
+BaseType_t xPortFPUContextIsDirty(BaseType_t core_id)
+{
+    return (BaseType_t)(port_uxCoprocOwner[core_id][FPU_COPROC_IDX] != NULL);
+}
+#endif /* (SOC_CPU_COPROC_NUM > 0) && SOC_CPU_HAS_FPU && SOC_PM_FPU_RETENTION_BY_SW */
 
 #endif /* SOC_CPU_COPROC_NUM > 0 */
 
