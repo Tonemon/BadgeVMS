@@ -19,6 +19,16 @@ Some feature highlights:
 
 To build BadgeVMS you need to have esp-idf 5.5.4 or later installed. For installation instructions see here: https://docs.espressif.com/projects/esp-idf/en/stable/esp32/get-started/index.html.
 
+If you already have an older version of esp-idf installed, upgrade it to 5.5.4:
+
+```bash
+cd ~/esp/esp-idf
+git fetch --tags
+git checkout v5.5.4
+git submodule update --init --recursive
+./install.sh esp32p4,esp32c6
+```
+
 Then build and run on the badge with:
 
 ```
