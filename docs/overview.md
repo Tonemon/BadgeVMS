@@ -3,7 +3,7 @@
 BadgeVMS is the badge OS for the WHY2025 hacker camp. It runs on an ESP32P4-based badge and provides a multi-process environment where each program gets its own isolated virtual address space.
 
 **License**: GPL v3  
-**Build system**: ESP-IDF 5.5 + CMake (target: esp32p4)  
+**Build system**: ESP-IDF 5.5.4+ + CMake (target: esp32p4)  
 **Build command**: `idf.py build flash monitor`  
 **After `git pull`**: always run `idf.py fullclean` to pick up sdkconfig.defaults changes.
 
