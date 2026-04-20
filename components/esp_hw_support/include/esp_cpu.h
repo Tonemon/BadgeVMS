@@ -271,6 +271,16 @@ FORCE_INLINE_ATTR void esp_cpu_intr_set_mtvt_addr(const void *mtvt_addr)
 {
     rv_utils_set_mtvt((uint32_t)mtvt_addr);
 }
+
+/**
+ * @brief Set the base address of the current CPU's Interrupt Vector Table (XTVT)
+ *
+ * @param xtvt_addr Interrupt Vector Table's base address
+ */
+FORCE_INLINE_ATTR void esp_cpu_intr_set_xtvt_addr(const void *xtvt_addr)
+{
+    rv_utils_set_xtvt((uint32_t)xtvt_addr);
+}
 #endif  //#if SOC_INT_CLIC_SUPPORTED
 
 #if SOC_CPU_SUPPORT_WFE

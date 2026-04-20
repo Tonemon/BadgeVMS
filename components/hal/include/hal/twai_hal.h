@@ -79,6 +79,7 @@ typedef struct {
 typedef struct {
     int controller_id;
     uint32_t clock_source_hz;
+    uint32_t timer_freq;
     uint32_t intr_mask;
     int8_t retry_cnt;
     bool no_receive_rtr;
@@ -320,7 +321,7 @@ void twai_hal_format_frame(const twai_hal_trans_desc_t *trans_desc, twai_hal_fra
  * @param frame Pointer to frame structure
  * @param message Pointer to empty message structure
  */
-void twai_hal_parse_frame(const twai_hal_frame_t *frame, twai_frame_header_t *header, uint8_t *buffer, uint8_t buffer_len);
+void twai_hal_parse_frame(twai_hal_context_t *hal_ctx, twai_hal_frame_t *frame, twai_frame_header_t *header, uint8_t *buffer, uint8_t buffer_len);
 
 /**
  * @brief Copy a frame into the TX buffer and transmit

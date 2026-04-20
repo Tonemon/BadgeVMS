@@ -58,20 +58,30 @@ esp_err_t gdma_new_link_list(const gdma_link_list_config_t *config, gdma_link_li
 esp_err_t gdma_del_link_list(gdma_link_list_handle_t list);
 
 /**
+ * @brief Types for the next node of the final item in the DMA link list
+ */
+typedef enum {
+    GDMA_FINAL_LINK_TO_DEFAULT = 0, /*!< Next node is the default next item in the link list */
+    GDMA_FINAL_LINK_TO_NULL = 1,    /*!< No next node is linked (singly-linked, stop here) */
+    GDMA_FINAL_LINK_TO_HEAD = 2,    /*!< Next node is the head item (circular) */
+    GDMA_FINAL_LINK_TO_START = 3,   /*!< Next node is the start item */
+} gdma_final_node_link_type_t;
+
+/**
  * @brief DMA buffer mount configurations
  */
 typedef struct {
     void *buffer;   //!< Buffer to be mounted to the DMA link list
+    size_t buffer_alignment; //!< Alignment of the buffer. By default, it's 1 byte alignment.
     size_t length;  //!< Number of bytes that are expected to be transferred
     struct gdma_buffer_mount_flags {
         uint32_t mark_eof: 1;   /*!< Whether to mark the list item as the "EOF" item.
                                      Note, an "EOF" descriptor can be interrupted differently by peripheral.
-                                     But it doesn't mean to terminate a DMA link (use `mark_final` instead).
+                                     But it doesn't mean to terminate a DMA link (set `mark_final` to GDMA_FINAL_LINK_TO_NULL instead).
                                      EOF link list item can also trigger an interrupt. */
-        uint32_t mark_final: 1; /*!< Whether to terminate the DMA link list at this item.
-                                     Note, DMA engine will stop at this item and trigger an interrupt.
-                                     If `mark_final` is not set, this list item will point to the next item, and
-                                     wrap around to the head item if it's the last one in the list. */
+        gdma_final_node_link_type_t mark_final: 2; /*!< Specify the next item of the final item.
+                                                        Use GDMA_FINAL_LINK_TO_NULL to stop DMA here.
+                                                        Setting to true (1) is equivalent to GDMA_FINAL_LINK_TO_NULL. */
         uint32_t bypass_buffer_align_check: 1; /*!< Whether to bypass the buffer alignment check.
                                                     Only enable it when you know what you are doing. */
     } flags; //!< Flags for buffer mount configurations
@@ -175,6 +185,24 @@ esp_err_t gdma_link_get_owner(gdma_link_list_handle_t list, int item_index, gdma
  *         If the link list is empty or invalid, return 0.
  */
 size_t gdma_link_count_buffer_size_till_eof(gdma_link_list_handle_t list, int start_item_index);
+
+/**
+ * @brief Get the buffer of a DMA link list item
+ *
+ * @param[in] list Link list handle
+ * @param[in] item_index Index of the link list item
+ * @return Buffer pointer of the link list item
+ */
+void* gdma_link_get_buffer(gdma_link_list_handle_t list, int item_index);
+
+/**
+ * @brief Get the length of the buffer of a DMA link list item
+ *
+ * @param[in] list Link list handle
+ * @param[in] item_index Index of the link list item
+ * @return Length of the buffer of the link list item
+ */
+size_t gdma_link_get_length(gdma_link_list_handle_t list, int item_index);
 
 #ifdef __cplusplus
 }

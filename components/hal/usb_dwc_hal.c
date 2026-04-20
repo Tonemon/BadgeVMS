@@ -162,10 +162,7 @@ void usb_dwc_hal_deinit(usb_dwc_hal_context_t *hal)
 
 void usb_dwc_hal_core_soft_reset(usb_dwc_hal_context_t *hal)
 {
-    usb_dwc_ll_grstctl_core_soft_reset(hal->dev);
-    while (usb_dwc_ll_grstctl_is_core_soft_reset_in_progress(hal->dev)) {
-        ;   // Wait until core reset is done
-    }
+    usb_dwc_ll_grstctl_core_soft_reset(hal->dev);  // Polls internally until reset is done
     while (!usb_dwc_ll_grstctl_is_ahb_idle(hal->dev)) {
         ;   // Wait until AHB Master bus is idle before doing any other operations
     }

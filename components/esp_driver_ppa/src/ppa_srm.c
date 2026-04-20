@@ -102,9 +102,11 @@ bool ppa_srm_transaction_on_picked(uint32_t num_chans, const dma2d_trans_channel
     dma2d_set_transfer_ability(dma2d_rx_chan, &dma_transfer_ability);
 
     // Configure the block size to be received by the SRM engine, which is passed from the 2D-DMA TX channel (i.e. 2D-DMA dscr-port mode)
+    uint32_t dscr_block_h = 0, dscr_block_v = 0;
+    ppa_ll_srm_get_dma_dscr_port_mode_block_size(platform->hal.dev, srm_trans_desc->in.srm_cm, ppa_ll_srm_get_mb_size(platform->hal.dev), &dscr_block_h, &dscr_block_v);
     dma2d_dscr_port_mode_config_t dma_dscr_port_mode_config = {
-        .block_h = (srm_trans_desc->in.srm_cm == PPA_SRM_COLOR_MODE_YUV420) ? PPA_LL_SRM_YUV420_BLOCK_SIZE : PPA_LL_SRM_DEFAULT_BLOCK_SIZE,
-        .block_v = (srm_trans_desc->in.srm_cm == PPA_SRM_COLOR_MODE_YUV420) ? PPA_LL_SRM_YUV420_BLOCK_SIZE : PPA_LL_SRM_DEFAULT_BLOCK_SIZE,
+        .block_h = dscr_block_h,
+        .block_v = dscr_block_v,
     };
     dma2d_configure_dscr_port_mode(dma2d_tx_chan, &dma_dscr_port_mode_config);
 

@@ -91,7 +91,7 @@ static bool dma_trans_done_cb(dw_gdma_channel_handle_t chan, const dw_gdma_trans
     // clear the interrupt status
     uint32_t error_status = mipi_dsi_brg_ll_get_interrupt_status(hal->bridge);
     mipi_dsi_brg_ll_clear_interrupt_status(hal->bridge, error_status);
-    if (unlikely(error_status & MIPI_DSI_LL_EVENT_UNDERRUN)) {
+    if (unlikely(error_status & MIPI_DSI_BRG_LL_EVENT_UNDERRUN)) {
         // when an underrun happens, the LCD display may already becomes blue
         // it's too late to recover the display, so we just print an error message
         // as a hint to the user that he should optimize the memory bandwidth (with AXI-ICM)
@@ -324,7 +324,7 @@ esp_err_t esp_lcd_new_panel_dpi(esp_lcd_dsi_bus_handle_t bus, const esp_lcd_dpi_
     mipi_dsi_brg_ll_set_num_pixel_bits(hal->bridge, panel_config->video_timing.h_size * panel_config->video_timing.v_size * bits_per_pixel);
     mipi_dsi_brg_ll_set_underrun_discard_count(hal->bridge, panel_config->video_timing.h_size);
     // set input color space
-    mipi_dsi_brg_ll_set_input_color_space(hal->bridge, COLOR_SPACE_TYPE(in_color_format));
+    mipi_dsi_brg_ll_set_input_color_range(hal->bridge, COLOR_SPACE_TYPE(in_color_format));
     // use the DW_GDMA as the flow controller
     mipi_dsi_brg_ll_set_flow_controller(hal->bridge, MIPI_DSI_LL_FLOW_CONTROLLER_DMA);
     mipi_dsi_brg_ll_set_multi_block_number(hal->bridge, DPI_PANEL_MIN_DMA_NODES_PER_LINK);
@@ -460,7 +460,7 @@ static esp_err_t dpi_panel_init(esp_lcd_panel_t *panel)
 
     // enable the underrun interrupt, we use this as a signal of bandwidth shortage
     // note, we opt to not install a dedicated interrupt handler just for this error condition, instead, we check it in the DMA callback
-    mipi_dsi_brg_ll_enable_interrupt(hal->bridge, MIPI_DSI_LL_EVENT_UNDERRUN, true);
+    mipi_dsi_brg_ll_enable_interrupt(hal->bridge, MIPI_DSI_BRG_LL_EVENT_UNDERRUN, true);
 
     return ESP_OK;
 }

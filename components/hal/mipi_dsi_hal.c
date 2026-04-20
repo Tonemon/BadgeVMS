@@ -230,7 +230,7 @@ void mipi_dsi_hal_host_gen_read_dcs_command(mipi_dsi_hal_context_t *hal, uint8_t
 void mipi_dsi_hal_host_dpi_set_color_coding(mipi_dsi_hal_context_t *hal, lcd_color_format_t color_coding, uint32_t sub_config)
 {
     mipi_dsi_host_ll_dpi_set_color_coding(hal->host, color_coding, sub_config);
-    mipi_dsi_brg_ll_set_pixel_format(hal->bridge, color_coding, sub_config);
+    mipi_dsi_brg_ll_set_input_color_format(hal->bridge, color_coding);
 }
 
 void mipi_dsi_hal_host_dpi_set_horizontal_timing(mipi_dsi_hal_context_t *hal, uint32_t hsw, uint32_t hbp, uint32_t active_width, uint32_t hfp)

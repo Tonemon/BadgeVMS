@@ -59,15 +59,21 @@ typedef enum {
 
 #if SOC_MIPI_DSI_SUPPORTED
 /**
- * @brief MIPI DSI PHY clock source
+ * @brief MIPI DSI PHY PLL reference clock source
  */
-typedef soc_periph_mipi_dsi_phy_clk_src_t mipi_dsi_phy_clock_source_t;
+typedef soc_periph_mipi_dsi_phy_pllref_clk_src_t mipi_dsi_phy_pllref_clock_source_t;
+
+/**
+ * @brief For backward compatibility
+ */
+typedef mipi_dsi_phy_pllref_clock_source_t mipi_dsi_phy_clock_source_t;
 
 /**
  * @brief MIPI DSI DPI clock source
  */
 typedef soc_periph_mipi_dsi_dpi_clk_src_t mipi_dsi_dpi_clock_source_t;
 #else
+typedef int mipi_dsi_phy_pllref_clock_source_t;
 typedef int mipi_dsi_phy_clock_source_t;
 typedef int mipi_dsi_dpi_clock_source_t;
 #endif // SOC_MIPI_DSI_SUPPORTED

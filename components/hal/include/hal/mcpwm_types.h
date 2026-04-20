@@ -106,6 +106,15 @@ typedef enum {
 } mcpwm_capture_edge_t;
 
 /**
+ * @brief MCPWM timer specific events that supported by the ETM module
+ */
+typedef enum {
+    MCPWM_TIMER_ETM_EVENT_TEZ,  /*!< The timer reaches zero */
+    MCPWM_TIMER_ETM_EVENT_TEP,  /*!< The timer reaches peak */
+    MCPWM_TIMER_ETM_EVENT_MAX,  /*!< Maximum number of timer events */
+} mcpwm_timer_etm_event_type_t;
+
+/**
  * @brief MCPWM comparator specific events that supported by the ETM module
  */
 typedef enum {
