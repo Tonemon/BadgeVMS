@@ -822,7 +822,7 @@ static void launcher_config_load(app_context *ctx) {
     ctx->launch_default_app       = false;
     ctx->launcher_default_uid[0]  = '\0';
     ctx->launcher_default_name[0] = '\0';
-    strncpy(ctx->hostname,        "why2025badge.lan", sizeof(ctx->hostname) - 1);
+    strncpy(ctx->hostname,        "why2025badge", sizeof(ctx->hostname) - 1);
     strncpy(ctx->badge_owner_name, "John",            sizeof(ctx->badge_owner_name) - 1);
     ctx->display_username_at_boot = false;
 
