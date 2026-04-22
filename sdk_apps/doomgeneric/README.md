@@ -4,6 +4,16 @@ Of course Doom is already portable but with doomgeneric it is possible with just
 
 To try it you will need a WAD file (game data). If you don't own the game, shareware version is freely available (doom1.wad).
 
+## WHY2025 badge
+
+Place `doom1.wad` in `sdk_apps/doomgeneric/storage_skel/doom1.wad` before building.
+The build system copies everything in `storage_skel/` into the badge's storage partition
+under `BADGEVMS/APPS/doomgeneric/`, which is the path the game opens at runtime
+(`APPS:[doomgeneric]doom1.wad`).
+
+The WAD file is excluded from git via `.gitignore` — you will need to place it
+there manually every time you work from a fresh clone.
+
 # porting
 Create a file named doomgeneric_yourplatform.c and just implement these functions to suit your platform.
 * DG_Init
