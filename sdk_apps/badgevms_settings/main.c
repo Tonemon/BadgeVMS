@@ -1323,8 +1323,8 @@ static void draw_password_dialog(app_context *ctx) {
 }
 
 static void draw_about_dialog(app_context *ctx) {
-    int dialog_w = 620;
-    int dialog_h = 350;
+    int dialog_w = 640;
+    int dialog_h = 460;
     int dialog_x = (SCREEN_WIDTH  - dialog_w) / 2;
     int dialog_y = (SCREEN_HEIGHT - dialog_h) / 2;
 
@@ -1340,7 +1340,7 @@ static void draw_about_dialog(app_context *ctx) {
     int lh = FONT_HEIGHT + 6;
     int y  = dialog_y + title_h + 12;
 
-    draw_text_bold(ctx, x, y, "Compute Unit", CDE_SELECTED_TEXT);
+    draw_text_bold(ctx, x, y, "Compute Module", CDE_SELECTED_TEXT);
     y += lh;
     draw_text(ctx, x + 12, y, "ESP32-P4  -  Main processor", CDE_TEXT_COLOR);
     y += lh;
@@ -1349,13 +1349,21 @@ static void draw_about_dialog(app_context *ctx) {
 
     draw_text_bold(ctx, x, y, "Carrier Board", CDE_SELECTED_TEXT);
     y += lh;
-    draw_text(ctx, x + 12, y, "ESP32-C6  -  Wi-Fi & Bluetooth connectivity", CDE_TEXT_COLOR);
+    draw_text(ctx, x + 12, y, "ESP32-C6  -  Wi-Fi 6 / BLE 5.3", CDE_TEXT_COLOR);
     y += lh;
-    draw_text(ctx, x + 12, y, "Display   -  4\" square 720x720 MIPI DSI", CDE_TEXT_COLOR);
+    draw_text(ctx, x + 12, y, "RA-01H    -  LoRa module", CDE_TEXT_COLOR);
+    y += lh;
+    draw_text(ctx, x + 12, y, "Display   -  4\" 720x720 IPS MIPI DSI", CDE_TEXT_COLOR);
     y += lh;
     draw_text(ctx, x + 12, y, "BMI270    -  Accelerometer & gyroscope", CDE_TEXT_COLOR);
     y += lh;
     draw_text(ctx, x + 12, y, "BME690    -  Air quality, temperature, humidity", CDE_TEXT_COLOR);
+    y += lh;
+    draw_text(ctx, x + 12, y, "18650     -  Dual Li-Ion cells", CDE_TEXT_COLOR);
+    y += lh;
+    draw_text(ctx, x + 12, y, "GPIO      -  Expansion headers", CDE_TEXT_COLOR);
+    y += lh;
+    draw_text(ctx, x + 12, y, "Pogo-pin  -  Frontpanel connector", CDE_TEXT_COLOR);
     y += lh + 6;
 
     draw_rect(ctx, dialog_x + 15, y, dialog_w - 30, 1, CDE_BORDER_DARK);
