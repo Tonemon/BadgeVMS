@@ -100,6 +100,82 @@ static inline void mark_scene_damaged(void) {
     background_damaged    = ALL_DISPLAY_FB_MASK;
 }
 
+#if CONFIG_ESP32P4_SELECTS_REV_LESS_V3
+// PPA does not work on ESP32-P4 rev 1.x silicon; blit in software instead.
+// Implements the same pixel mapping as ppa_do_scale_rotate_mirror with
+// nearest-neighbour scaling and all four rotation angles.
+static void software_blit(
+    const void        *src_buf,   uint32_t src_w,  uint32_t src_h,
+    uint16_t          *dst,       uint32_t dst_w,  uint32_t dst_h,
+    int block_x, int block_y, int block_w, int block_h,
+    int out_x,   int out_y,
+    rotation_angle_t rot,
+    ppa_srm_color_mode_t in_mode, bool rgb_swap,
+    float scale_x, float scale_y
+) {
+    // Output dimensions after rotation
+    int out_w = (rot == ROTATION_ANGLE_90 || rot == ROTATION_ANGLE_270)
+                ? (int)(block_h * scale_y) : (int)(block_w * scale_x);
+    int out_h = (rot == ROTATION_ANGLE_90 || rot == ROTATION_ANGLE_270)
+                ? (int)(block_w * scale_x) : (int)(block_h * scale_y);
+
+    for (int oy = 0; oy < out_h; oy++) {
+        for (int ox = 0; ox < out_w; ox++) {
+            // Reverse-map output (ox,oy) → source (sx,sy) in block-relative coords
+            int sx, sy;
+            switch (rot) {
+                case ROTATION_ANGLE_0:
+                    sx = (int)(ox / scale_x);
+                    sy = (int)(oy / scale_y);
+                    break;
+                case ROTATION_ANGLE_90:
+                    // PPA 270 → source (sx,sy): ox=bh-1-sy/sy, oy=sx
+                    sx = (int)(oy / scale_x);
+                    sy = (int)((out_w - 1 - ox) / scale_y);
+                    break;
+                case ROTATION_ANGLE_180:
+                    sx = (int)((out_w - 1 - ox) / scale_x);
+                    sy = (int)((out_h - 1 - oy) / scale_y);
+                    break;
+                case ROTATION_ANGLE_270: // PPA 90
+                    // rotate_coordinates(270): fb_x=sy, fb_y=719-sx
+                    // so: ox=sy => sy=ox, oy=bw-1-sx => sx=bw-1-oy
+                    sx = (int)((out_h - 1 - oy) / scale_y);
+                    sy = (int)(ox / scale_x);
+                    break;
+                default:
+                    sx = 0; sy = 0; break;
+            }
+
+            if (sx < 0 || sx >= block_w || sy < 0 || sy >= block_h) continue;
+
+            int src_px = block_x + sx;
+            int src_py = block_y + sy;
+            if (src_px < 0 || src_px >= (int)src_w || src_py < 0 || src_py >= (int)src_h) continue;
+
+            uint16_t pixel;
+            if (in_mode == PPA_SRM_COLOR_MODE_ARGB8888) {
+                uint32_t p32 = ((const uint32_t *)src_buf)[src_py * src_w + src_px];
+                uint8_t r = (p32 >> 16) & 0xFF;
+                uint8_t g = (p32 >>  8) & 0xFF;
+                uint8_t b =  p32        & 0xFF;
+                if (rgb_swap) { uint8_t t = r; r = b; b = t; }
+                pixel = ((uint16_t)(r >> 3) << 11) | ((uint16_t)(g >> 2) << 5) | (b >> 3);
+            } else {
+                pixel = ((const uint16_t *)src_buf)[src_py * src_w + src_px];
+                if (rgb_swap) pixel = ((pixel & 0xF800u) >> 11) | (pixel & 0x07E0u) | ((pixel & 0x001Fu) << 11);
+            }
+
+            int dx = out_x + ox;
+            int dy = out_y + oy;
+            if (dx >= 0 && dx < (int)dst_w && dy >= 0 && dy < (int)dst_h) {
+                dst[dy * dst_w + dx] = pixel;
+            }
+        }
+    }
+}
+#endif // CONFIG_ESP32P4_SELECTS_REV_LESS_V3
+
 __attribute__((always_inline)) static inline ppa_srm_rotation_angle_t rotation_to_srm(rotation_angle_t rotation) {
     switch (rotation) {
         case ROTATION_ANGLE_270: return PPA_SRM_ROTATION_ANGLE_90;
@@ -447,6 +523,7 @@ IRAM_ATTR static void on_refresh(void *ignored) {
 // }
 
 static void IRAM_ATTR NOINLINE_ATTR compositor(void *ignored) {
+#if !CONFIG_ESP32P4_SELECTS_REV_LESS_V3
     static ppa_client_handle_t ppa_srm_handle = NULL;
 
     ppa_client_config_t ppa_srm_config = {
@@ -454,12 +531,8 @@ static void IRAM_ATTR NOINLINE_ATTR compositor(void *ignored) {
         .max_pending_trans_num = 1,
     };
 
-    // ppa_event_callbacks_t srm_callbacks = {
-    //     .on_trans_done = ppa_srm_callback,
-    // };
-
     ppa_register_client(&ppa_srm_config, &ppa_srm_handle);
-    // ppa_client_register_event_callbacks(ppa_srm_handle, &srm_callbacks);
+#endif
 
     bool   fn_down               = false;
     bool   frame_ready           = false;
@@ -749,6 +822,26 @@ static void IRAM_ATTR NOINLINE_ATTR compositor(void *ignored) {
 
                         window_rect_t rotated_output = rotate_rect(visible_content, rotation);
 
+#if CONFIG_ESP32P4_SELECTS_REV_LESS_V3
+                        ESP_LOGW(TAG, "SW blit rect %d,%d %dx%d -> %d,%d...",
+                                 fb_rect.x, fb_rect.y, fb_rect.w, fb_rect.h,
+                                 rotated_output.x, rotated_output.y);
+                        software_blit(
+                            framebuffer->framebuffer.pixels,
+                            framebuffer->w, framebuffer->h,
+                            framebuffers[cur_fb], FRAMEBUFFER_MAX_W, FRAMEBUFFER_MAX_H,
+                            fb_rect.x, fb_rect.y, fb_rect.w, fb_rect.h,
+                            rotated_output.x, rotated_output.y,
+                            rotation, mode, rgb_swap,
+                            scale, scale
+                        );
+                        ESP_LOGW(TAG, "SW blit done");
+                        esp_err_t ppa_result = ESP_OK;
+                        {
+#else
+                        ESP_LOGW(TAG, "PPA blit rect %d,%d %dx%d -> %d,%d...",
+                                 fb_rect.x, fb_rect.y, fb_rect.w, fb_rect.h,
+                                 rotated_output.x, rotated_output.y);
                         ppa_srm_oper_config_t oper_config = {
                             .in.buffer         = framebuffer->framebuffer.pixels,
                             .in.pic_w          = framebuffer->w,
@@ -774,15 +867,12 @@ static void IRAM_ATTR NOINLINE_ATTR compositor(void *ignored) {
                             .byte_swap      = byte_swap,
                             .mode           = PPA_TRANS_MODE_BLOCKING,
                         };
-
-                        ESP_LOGW(TAG, "PPA blit rect %d,%d %dx%d -> %d,%d...",
-                                 fb_rect.x, fb_rect.y, fb_rect.w, fb_rect.h,
-                                 rotated_output.x, rotated_output.y);
                         esp_err_t ppa_result = ppa_do_scale_rotate_mirror(ppa_srm_handle, &oper_config);
                         ESP_LOGW(TAG, "PPA done: %s", esp_err_to_name(ppa_result));
                         if (ppa_result != ESP_OK) {
                             printf("PPA operation failed: %s\n", esp_err_to_name(ppa_result));
                         } else {
+#endif
                             changes           = true;
                             window->fb_dirty &= ~(1 << cur_fb);
                         }

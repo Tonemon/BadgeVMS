@@ -227,12 +227,9 @@ esp_err_t esp_lcd_new_panel_dpi(esp_lcd_dsi_bus_handle_t bus, const esp_lcd_dpi_
         frame_buffer = framebuffer_allocate(720, 720, bvms_fmt);
         ESP_GOTO_ON_FALSE(frame_buffer, ESP_ERR_NO_MEM, err, TAG, "no memory for frame buffer");
         dpi_panel->fbs[i] = (void*)frame_buffer->pixels;
-        ESP_LOGW(TAG, "fb[%d] @%p, msync...", i, frame_buffer->pixels);
         ESP_GOTO_ON_ERROR(esp_cache_msync(frame_buffer->pixels, fb_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED),
                           err, TAG, "cache write back failed");
-        ESP_LOGW(TAG, "fb[%d] msync done", i);
     }
-    ESP_LOGW(TAG, "fb alloc done, fb_size=%zu", fb_size);
     dpi_panel->fb_size = fb_size;
     dpi_panel->bits_per_pixel = bits_per_pixel;
     dpi_panel->h_pixels = panel_config->video_timing.h_size;
@@ -240,10 +237,8 @@ esp_err_t esp_lcd_new_panel_dpi(esp_lcd_dsi_bus_handle_t bus, const esp_lcd_dpi_
 
 #if SOC_DMA2D_SUPPORTED
     if (panel_config->flags.use_dma2d) {
-        ESP_LOGW(TAG, "installing dma2d fbcpy...");
         esp_async_fbcpy_config_t fbcpy_config = {};
         ESP_GOTO_ON_ERROR(esp_async_fbcpy_install(&fbcpy_config, &fbcpy_ctx), err, TAG, "install async memcpy 2d failed");
-        ESP_LOGW(TAG, "dma2d fbcpy installed");
         dpi_panel->fbcpy_handle = fbcpy_ctx;
         dpi_panel->draw_sem = xSemaphoreCreateBinaryWithCaps(DSI_MEM_ALLOC_CAPS);
         ESP_GOTO_ON_FALSE(dpi_panel->draw_sem, ESP_ERR_NO_MEM, err, TAG, "no memory for draw semaphore");
@@ -251,7 +246,6 @@ esp_err_t esp_lcd_new_panel_dpi(esp_lcd_dsi_bus_handle_t bus, const esp_lcd_dpi_
     }
 #endif // SOC_DMA2D_SUPPORTED
 
-    ESP_LOGW(TAG, "configuring DPI clock...");
     // if the clock source is not assigned, fallback to the default clock source
     mipi_dsi_dpi_clock_source_t dpi_clk_src = panel_config->dpi_clk_src;
     if (dpi_clk_src == 0) {
@@ -261,19 +255,15 @@ esp_err_t esp_lcd_new_panel_dpi(esp_lcd_dsi_bus_handle_t bus, const esp_lcd_dpi_
     uint32_t dpi_clk_src_freq_hz = 0;
     ESP_GOTO_ON_ERROR(esp_clk_tree_src_get_freq_hz(dpi_clk_src, ESP_CLK_TREE_SRC_FREQ_PRECISION_CACHED,
                                                    &dpi_clk_src_freq_hz), err, TAG, "get clock source frequency failed");
-    ESP_LOGW(TAG, "DPI clk src freq=%lu Hz", dpi_clk_src_freq_hz);
     // divide the source clock to get the final DPI clock
     uint32_t dpi_div = mipi_dsi_hal_host_dpi_calculate_divider(hal, dpi_clk_src_freq_hz / 1000 / 1000, panel_config->dpi_clock_freq_mhz);
-    ESP_LOGW(TAG, "DPI clk div=%lu", dpi_div);
     ESP_GOTO_ON_ERROR(esp_clk_tree_enable_src((soc_module_clk_t)dpi_clk_src, true), err, TAG, "clock source enable failed");
-    ESP_LOGW(TAG, "DPI clk src enabled");
     // set the clock source, set the divider, and enable the dpi clock
     DSI_CLOCK_SRC_ATOMIC() {
         mipi_dsi_ll_set_dpi_clock_source(bus_id, dpi_clk_src);
         mipi_dsi_ll_set_dpi_clock_div(bus_id, dpi_div);
         mipi_dsi_ll_enable_dpi_clock(bus_id, true);
     }
-    ESP_LOGW(TAG, "DPI clk configured");
 
 #if CONFIG_PM_ENABLE
     // When MIPI DSI is working, we don't expect the clock source would be turned off
@@ -284,10 +274,8 @@ esp_err_t esp_lcd_new_panel_dpi(esp_lcd_dsi_bus_handle_t bus, const esp_lcd_dpi_
     esp_pm_lock_acquire(dpi_panel->pm_lock);
 #endif
 
-    ESP_LOGW(TAG, "creating DMA link...");
     // create DMA resources
     ESP_GOTO_ON_ERROR(dpi_panel_create_dma_link(dpi_panel), err, TAG, "initialize DMA link failed");
-    ESP_LOGW(TAG, "DMA link created");
 
     mipi_dsi_host_ll_dpi_set_vcid(hal->host, panel_config->virtual_channel);
     mipi_dsi_hal_host_dpi_set_color_coding(hal, out_color_format, 0);
