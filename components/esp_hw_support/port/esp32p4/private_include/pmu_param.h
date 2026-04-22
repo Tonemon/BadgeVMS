@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2023-2024 Espressif Systems (Shanghai) CO LTD
+ * SPDX-FileCopyrightText: 2023-2025 Espressif Systems (Shanghai) CO LTD
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -11,6 +11,7 @@
 #include <esp_types.h>
 #include "soc/pmu_struct.h"
 #include "hal/pmu_hal.h"
+#include "sdkconfig.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -18,7 +19,7 @@ extern "C" {
 
 #define HP_CALI_ACTIVE_DCM_VSET_DEFAULT     27 // For DCDC, about 1.25v
 #define HP_CALI_ACTIVE_DBIAS_DEFAULT        24 // For HP regulator
-#define LP_CALI_DBIAS                       29 // For LP regulator
+#define LP_CALI_ACTIVE_DBIAS_DEFAULT        29 // For LP regulator
 
 // FOR  XTAL FORCE PU IN SLEEP
 #define PMU_PD_CUR_SLEEP_ON    0
@@ -34,7 +35,7 @@ extern "C" {
 // FOR LIGHTSLEEP
 #define PMU_HP_DRVB_LIGHTSLEEP      0
 #define PMU_LP_DRVB_LIGHTSLEEP      0
-#define PMU_HP_XPD_LIGHTSLEEP       1
+#define PMU_HP_XPD_LIGHTSLEEP       0 // Always use DCDC power supply in lightsleep
 
 #define PMU_DBG_ATTEN_LIGHTSLEEP_DEFAULT    0
 #define PMU_HP_DBIAS_LIGHTSLEEP_0V6 1
@@ -52,6 +53,9 @@ extern "C" {
 
 #define PMU_DBG_ATTEN_DEEPSLEEP_DEFAULT 12
 #define PMU_LP_DBIAS_DEEPSLEEP_0V7      23
+
+uint32_t get_act_hp_dbias(void);
+uint32_t get_act_lp_dbias(void);
 
 typedef struct {
     pmu_hp_dig_power_reg_t  dig_power;
@@ -115,7 +119,12 @@ typedef union {
         uint32_t dcdc_switch_pd_en: 1;
         uint32_t mem_dslp     : 1;
         uint32_t mem_pd_en    : 1;
+#if CONFIG_ESP32P4_SELECTS_REV_LESS_V3
         uint32_t reserved1    : 6;
+#else
+        uint32_t reserved1    : 5;
+        uint32_t cpu_pd_en    : 1;
+#endif
         uint32_t cnnt_pd_en   : 1;
         uint32_t top_pd_en    : 1;
     };
@@ -322,6 +331,7 @@ typedef struct {
 } pmu_sleep_digital_config_t;
 
 
+#if CONFIG_ESP32P4_SELECTS_REV_LESS_V3
 #define PMU_SLEEP_DIGITAL_DSLP_CONFIG_DEFAULT(sleep_flags) {            \
     .syscntl = {                                                        \
         .dig_pad_slp_sel = 0,                                           \
@@ -335,6 +345,19 @@ typedef struct {
         .lp_pad_hold_all = (sleep_flags & PMU_SLEEP_PD_LP_PERIPH) ? 1 : 0, \
     }                                                                   \
 }
+#else // !CONFIG_ESP32P4_SELECTS_REV_LESS_V3
+#define PMU_SLEEP_DIGITAL_DSLP_CONFIG_DEFAULT(sleep_flags) {            \
+    .syscntl = {                                                        \
+        .dig_pad_slp_sel = 0,                                           \
+    }                                                                   \
+}
+
+#define PMU_SLEEP_DIGITAL_LSLP_CONFIG_DEFAULT(sleep_flags) {            \
+    .syscntl = {                                                        \
+        .dig_pad_slp_sel = 0,                                           \
+    }                                                                   \
+}
+#endif
 
 typedef struct {
     struct {
@@ -348,6 +371,7 @@ typedef struct {
 #define PMU_SLEEP_ANALOG_LSLP_CONFIG_DEFAULT(sleep_flags) {       \
     .hp_sys = {                                                   \
         .analog = {                                               \
+            .dcm_mode        = 1,                                 \
             .drv_b           = PMU_HP_DRVB_LIGHTSLEEP,            \
             .pd_cur          = PMU_PD_CUR_SLEEP_DEFAULT,          \
             .bias_sleep      = PMU_BIASSLP_SLEEP_DEFAULT,         \
@@ -382,6 +406,7 @@ typedef struct {
 #define PMU_SLEEP_ANALOG_DSLP_CONFIG_DEFAULT(sleep_flags) {         \
     .hp_sys = {                                                     \
         .analog = {                                                 \
+            .dcm_mode        = 0,                                   \
             .pd_cur        = PMU_PD_CUR_SLEEP_DEFAULT,              \
             .bias_sleep    = PMU_BIASSLP_SLEEP_DEFAULT,             \
             .xpd           = PMU_HP_XPD_DEEPSLEEP,                  \
@@ -500,7 +525,7 @@ typedef struct pmu_sleep_machine_constant {
         .system_dfs_up_work_time_us     = 124,  \
         .analog_wait_time_us            = PMU_HP_ANA_WAIT_TIME_PD_TOP_US, \
         .power_supply_wait_time_us      = 2,    \
-        .power_up_wait_time_us          = 2,    \
+        .power_up_wait_time_us          = 26,   \
         .regdma_s2m_work_time_us        = 172,  \
         .regdma_s2a_work_time_us        = PMU_REGDMA_S2A_WORK_TIME_US, \
         .regdma_m2a_work_time_us        = 278,  \

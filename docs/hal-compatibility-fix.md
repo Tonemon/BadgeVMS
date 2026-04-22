@@ -50,8 +50,10 @@ endchoice
 This set `CONFIG_ESP_REV_MIN_FULL=1`, activating hw_ver1 code paths while SOC
 headers targeted hw_ver3. Every hw_ver3-only register access failed.
 
-**Fix:** Updated to offer only rev 3.0/3.1 and locked `sdkconfig.defaults` to
-`CONFIG_ESP32P4_REV_MIN_300=y`.
+**Fix:** Updated to offer rev 1.0 (prototype), 3.0, and 3.1. `sdkconfig.defaults` is
+set to `CONFIG_ESP32P4_REV_MIN_100=y` / `CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y` to
+target the WHY2025 prototype badge (rev 1.0 silicon); production hardware (rev 3.x)
+requires `CONFIG_ESP32P4_REV_MIN_300=y` instead.
 
 ### Root cause 2 — Stale HAL header overrides (~90 files)
 
@@ -114,10 +116,10 @@ These files have firmware-specific logic and remain as overrides:
 
 | File | Change |
 |---|---|
-| `twai_hal_sja1000.c` | `twai_ll_parse_frame_buffer` split into `twai_ll_parse_frame_header` + `twai_ll_parse_frame_data`; `hal_ctx` added as first param to `twai_hal_parse_frame` |
+| `twai_hal_sja1000.c` | `twai_ll_parse_frame_buffer` split into `twai_ll_parse_frame_header` + `twai_ll_parse_frame_data`; `hal_ctx` removed as first param from `twai_hal_parse_frame` |
 | `twai_hal.h` | `timer_freq` field added to config; `twai_hal_parse_frame` signature updated |
 | `mipi_dsi_hal.c` | `mipi_dsi_brg_ll_set_pixel_format` → `mipi_dsi_brg_ll_set_input_color_format`; `sub_config` param dropped |
-| `spi_hal.c` | `spi_ll_set_mosi_free_level` → `spi_ll_set_data_pin_idle_level` |
+| `spi_hal.c` | `spi_ll_set_data_pin_idle_level` → `spi_ll_set_mosi_free_level` |
 | `spi_hal.h` | Function renamed + compat alias; `spi_hal_clear/get_intr_mask` moved out of `SOC_SPI_SCT_SUPPORTED` guard |
 | `touch_sens_hal.c` | Removed `touch_ll_sample_cfg_bypass_shield_output` call (removed from IDF; hw_ver3 doesn't support shield bypass) |
 | `usb_dwc_hal.c` | Removed polling loop for `usb_dwc_ll_grstctl_is_core_soft_reset_in_progress` (IDF absorbed into the LL function itself) |
@@ -146,16 +148,63 @@ These files have firmware-specific logic and remain as overrides:
 
 ---
 
+## ESP32-P4 Rev 1.x (Prototype Badge) Support
+
+The WHY2025 prototype badge uses ESP32-P4 rev 1.0 silicon. Espressif's own Kconfig
+documentation notes that rev 1.x and rev 3.x are mutually exclusive targets with "huge
+hardware differences". The following additional work was required to support rev 1.0.
+
+### Kconfig — rev 1.0 options exposed
+
+`components/esp_hw_support/port/esp32p4/Kconfig.hw_support` was synced from upstream IDF
+to add the `ESP32P4_REV_MIN_100` choice and the `ESP32P4_SELECTS_REV_LESS_V3` gate
+(which was missing entirely in the firmware's stale fork).
+
+### esp_hw_support — PMU / RTC / clock sync
+
+Five files were updated from upstream IDF to align with rev 1.0 register layouts and
+init sequences. These are unmodified upstream copies (no badge-specific changes); the
+firmware was simply missing them:
+
+| File | Change |
+|---|---|
+| `port/esp32p4/esp_clk_tree.c` | Rev 1.x XTAL / PLL clock tree values |
+| `port/esp32p4/pmu_init.c` | PMU power-on init sequence for rev 1.x |
+| `port/esp32p4/pmu_param.c` | PMU voltage / bias parameters for rev 1.x |
+| `port/esp32p4/pmu_sleep.c` | Sleep/wake PMU state machine for rev 1.x |
+| `port/esp32p4/private_include/pmu_param.h` | PMU parameter header |
+| `port/esp32p4/rtc_clk.c` | RTC clock source selection for rev 1.x |
+| `port/esp32p4/rtc_clk_init.c` | RTC clock init for rev 1.x |
+| `hal/esp32p4/clk_tree_hal.c` | Clock tree HAL for rev 1.x |
+| `hal/include/hal/clk_tree_hal.h` | Clock tree HAL header |
+
+### compositor / esp_driver_ppa — software blit fallback
+
+On rev 1.0 silicon, the PPA (Pixel Processing Accelerator) completion interrupt never
+fires. Any call to `ppa_do_scale_rotate_mirror` with `PPA_TRANS_MODE_BLOCKING` hangs
+indefinitely — the compositor task blocks forever on the FreeRTOS semaphore and the
+badge freezes completely.
+
+**Fix:** `software_blit()` added to `badgevms/compositor/compositor.c`, gated on
+`#if CONFIG_ESP32P4_SELECTS_REV_LESS_V3`. It replicates the PPA SRM operation entirely
+in software: all four rotation angles, nearest-neighbour scaling, RGB565 and ARGB8888
+input, and R/B channel swap for the ST7703 panel.
+
+The PPA client is also not registered on the rev 1.x path. See
+`docs/esp32p4-rev1-ppa-hang.md` for full diagnosis and coordinate-transform derivation.
+
+---
+
 ## Current Status
 
-**Build result: `Project build complete` — all 8 components compile and link cleanly.**
+**Build result: `Project build complete` — all 8 components compile and link cleanly on both rev 1.x and rev 3.x targets.**
 
 | Component | Status | Fixes Applied |
 |---|---|---|
-| `hal` | **Complete** | Stale files deleted, chip rev fixed, all API drift resolved |
-| `esp_hw_support` | **Complete** | SPM rename, io_mux, GDMA, esp_cpu all fixed |
+| `hal` | **Complete** | Stale files deleted, chip rev fixed, all API drift resolved; rev 1.x clk_tree_hal synced |
+| `esp_hw_support` | **Complete** | SPM rename, io_mux, GDMA, esp_cpu fixed; rev 1.x PMU/RTC/clock files synced from upstream |
 | `esp_psram` | **Complete** | mspi additions done |
-| `esp_driver_ppa` | **Complete** | `ppa_srm.c`: constants → `ppa_ll_srm_get_dma_dscr_port_mode_block_size()`; `ppa_fill.c`: added `color_mode` arg to `ppa_ll_blend_configure_filling_block()` |
+| `esp_driver_ppa` | **Complete** | `ppa_srm.c`: constants → `ppa_ll_srm_get_dma_dscr_port_mode_block_size()`; `ppa_fill.c`: added `color_mode` arg; rev 1.x: PPA bypassed, software blit fallback in compositor |
 | `esp_lcd` | **Complete** | parl: `parlio_private.h` → `parlio_tx_private.h`; i80/rgb: `lcd_ll_enable_interrupt()` wrapped in `PERIPH_RCC_ATOMIC()`; dsi/bus: PHY clock API split; dsi/dpi: renamed underrun event + color range function |
 | `freertos` | **Complete** | Added `xPortFPUContextIsDirty()` (FPU sleep retention); added `hp_system_reg.h` include for ESP32-P4; added two OpenOCD debug table entries |
 | `esp_http_client` | **No drift** | API surface unchanged across 299 commits |
@@ -196,8 +245,9 @@ cycle where a task had used the FPU. Added to `port.c` and declared in `portmacr
 | esp_lcd | ~15% | Complete |
 | freertos | ~8% | Complete |
 | esp_http_client, esp-tls | ~2% | No changes needed |
+| rev 1.x prototype support | — | Complete (PMU/RTC sync, software blit) |
 
-**100% of the IDF 5.5.4 compatibility reconciliation is complete.**
+**IDF 5.5.4 compatibility reconciliation is complete for both rev 1.x (prototype) and rev 3.x (production) targets.**
 
 ---
 

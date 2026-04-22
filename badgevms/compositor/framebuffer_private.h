@@ -18,4 +18,4 @@
 
 #include "badgevms/framebuffer.h"
 
-framebuffer_t *framebuffer_allocate(uint32_t w, uint32_t h);
+framebuffer_t *framebuffer_allocate(uint32_t w, uint32_t h, pixel_format_t format);

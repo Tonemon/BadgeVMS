@@ -10,5 +10,4 @@ sdk_dist/
 .cache
 
 .superpowers/
-docs/
 .claude/
