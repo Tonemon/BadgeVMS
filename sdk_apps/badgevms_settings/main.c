@@ -80,6 +80,7 @@ typedef struct {
 
     wifi_network *networks;
     int           network_count;
+    bool          scanning;
     bool          show_password_dialog;
     bool          show_connecting_dialog;
     int           selected_network;
@@ -272,7 +273,7 @@ static void draw_signal_strength(app_context *ctx, int x, int y, int strength) {
 }
 
 static void populate_wifi_networks(app_context *ctx) {
-    ctx->network_count = wifi_scan_get_num_results();
+    ctx->network_count = wifi_scan_get_cached_num_results();
     free(ctx->networks);
     ctx->networks = calloc(ctx->network_count, sizeof(wifi_network));
 
@@ -1212,16 +1213,24 @@ static void draw_wifi_settings(app_context *ctx) {
         draw_3d_border(ctx, scrollbar_x + 3, thumb_y, 14, thumb_h, 0);
     }
 
+    if (ctx->scanning) {
+        int cached = wifi_scan_get_cached_num_results();
+        if (cached > 0) {
+            populate_wifi_networks(ctx);
+            ctx->scanning = false;
+        } else {
+            draw_text_centered(ctx, window_x + 15, list_y + list_h / 2 - FONT_HEIGHT / 2,
+                               window_w - 30, "Scanning...", CDE_INACTIVE_TEXT);
+        }
+    }
+
     draw_rect(ctx, window_x + 3, window_y + window_h - 42, window_w - 6, 39, CDE_BUTTON_COLOR);
     draw_3d_border(ctx, window_x + 3, window_y + window_h - 42, window_w - 6, 39, 1);
 
-    if (!ctx->network_count && (SDL_GetTicks() >= ctx->status_timer)) {
-        ctx->status_timer = SDL_GetTicks() + 3000;
-        strcpy(ctx->status_message, "Scanning for networks...");
-    }
-
     if (ctx->status_message[0] && SDL_GetTicks() < ctx->status_timer) {
         draw_text(ctx, window_x + 15, window_y + window_h - 35, ctx->status_message, ctx->status_color);
+    } else if (ctx->scanning) {
+        draw_text(ctx, window_x + 15, window_y + window_h - 35, "Scanning...", CDE_INACTIVE_TEXT);
     } else {
         draw_text(
             ctx,
@@ -1230,10 +1239,6 @@ static void draw_wifi_settings(app_context *ctx) {
             "UP/DOWN: Navigate  ENTER: Go  S: Scan  ESC: Back",
             CDE_TEXT_COLOR
         );
-    }
-
-    if (!ctx->network_count) {
-        populate_wifi_networks(ctx);
     }
 }
 
@@ -1809,7 +1814,12 @@ static void handle_key_event(app_context *ctx, SDL_Event *event) {
                     ctx->selected_item = 0;
             } else if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
                 switch (ctx->selected_item) {
-                    case 0: nav_push(ctx, SCREEN_WIFI); break;
+                    case 0:
+                        nav_push(ctx, SCREEN_WIFI);
+                        ctx->network_count = 0;
+                        ctx->scanning      = true;
+                        wifi_scan_start();
+                        break;
                     case 1: /* Badge owner name: open text input */
                         strncpy(ctx->text_input_title, "Badge Owner Name",
                                 sizeof(ctx->text_input_title) - 1);
@@ -1890,6 +1900,8 @@ static void handle_key_event(app_context *ctx, SDL_Event *event) {
                 }
             } else if (key == SDLK_S) {
                 ctx->network_count = 0;
+                ctx->scanning      = true;
+                wifi_scan_start();
             } else if (key == SDLK_ESCAPE) {
                 nav_pop(ctx);
             }

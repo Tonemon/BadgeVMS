@@ -365,6 +365,10 @@ static void hermes_do_scan() {
 
     status.last_scan_time = cur_time;
 
+    xSemaphoreTake(status.mutex, portMAX_DELAY);
+    status.num_scan_results = 0;
+    xSemaphoreGive(status.mutex);
+
     esp_wifi_scan_start(NULL, true);
 
     uint16_t         number = DEFAULT_SCAN_LIST_SIZE;
@@ -482,6 +486,21 @@ int wifi_scan_get_num_results() {
         send_command(WIFI_COMMAND_SCAN);
     }
 
+    xSemaphoreTake(status.mutex, portMAX_DELAY);
+    int ret = status.num_scan_results;
+    xSemaphoreGive(status.mutex);
+    return ret;
+}
+
+void wifi_scan_start(void) {
+    if (status.status == WIFI_DISABLED) return;
+    wifi_command_message_t *c = calloc(1, sizeof(wifi_command_message_t));
+    c->caller  = NULL;
+    c->command = WIFI_COMMAND_SCAN;
+    xQueueSend(hermes_queue, &c, portMAX_DELAY);
+}
+
+int wifi_scan_get_cached_num_results(void) {
     xSemaphoreTake(status.mutex, portMAX_DELAY);
     int ret = status.num_scan_results;
     xSemaphoreGive(status.mutex);
