@@ -722,14 +722,12 @@ static void IRAM_ATTR NOINLINE_ATTR compositor(void *ignored) {
         bool framebuffer_cleared = false;
         if (background_damaged & (1 << cur_fb)) {
             memset(framebuffers[cur_fb], 0xaa, FRAMEBUFFER_BYTES);
-            ESP_LOGW(TAG, "bg msync C2M fb=%d...", cur_fb);
             // Make sure the ppa will see our new background
             esp_cache_msync(
                 framebuffers[cur_fb],
                 FRAMEBUFFER_BYTES,
                 ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_INVALIDATE
             );
-            ESP_LOGW(TAG, "bg msync done");
             background_damaged  &= ~(1 << cur_fb);
             changes              = true;
             framebuffer_cleared  = true;
@@ -823,9 +821,6 @@ static void IRAM_ATTR NOINLINE_ATTR compositor(void *ignored) {
                         window_rect_t rotated_output = rotate_rect(visible_content, rotation);
 
 #if CONFIG_ESP32P4_SELECTS_REV_LESS_V3
-                        ESP_LOGW(TAG, "SW blit rect %d,%d %dx%d -> %d,%d...",
-                                 fb_rect.x, fb_rect.y, fb_rect.w, fb_rect.h,
-                                 rotated_output.x, rotated_output.y);
                         software_blit(
                             framebuffer->framebuffer.pixels,
                             framebuffer->w, framebuffer->h,
@@ -835,13 +830,9 @@ static void IRAM_ATTR NOINLINE_ATTR compositor(void *ignored) {
                             rotation, mode, rgb_swap,
                             scale, scale
                         );
-                        ESP_LOGW(TAG, "SW blit done");
                         esp_err_t ppa_result = ESP_OK;
                         {
 #else
-                        ESP_LOGW(TAG, "PPA blit rect %d,%d %dx%d -> %d,%d...",
-                                 fb_rect.x, fb_rect.y, fb_rect.w, fb_rect.h,
-                                 rotated_output.x, rotated_output.y);
                         ppa_srm_oper_config_t oper_config = {
                             .in.buffer         = framebuffer->framebuffer.pixels,
                             .in.pic_w          = framebuffer->w,
@@ -868,7 +859,6 @@ static void IRAM_ATTR NOINLINE_ATTR compositor(void *ignored) {
                             .mode           = PPA_TRANS_MODE_BLOCKING,
                         };
                         esp_err_t ppa_result = ppa_do_scale_rotate_mirror(ppa_srm_handle, &oper_config);
-                        ESP_LOGW(TAG, "PPA done: %s", esp_err_to_name(ppa_result));
                         if (ppa_result != ESP_OK) {
                             printf("PPA operation failed: %s\n", esp_err_to_name(ppa_result));
                         } else {
