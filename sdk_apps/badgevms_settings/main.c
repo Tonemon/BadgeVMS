@@ -882,6 +882,8 @@ static void launcher_config_load(app_context *ctx) {
             strncpy(ctx->launcher_default_name, ctx->launcher_default_uid,
                     sizeof(ctx->launcher_default_name) - 1);
     }
+
+    wifi_set_hostname(ctx->hostname);
 }
 
 static void launcher_config_save(app_context *ctx) {

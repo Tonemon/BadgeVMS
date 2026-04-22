@@ -105,6 +105,6 @@ direct_dependencies:
 - espressif/esp_wifi_remote
 - espressif/i2c_bus
 - idf
-manifest_hash: e3ee5fb5cfb34420061b616f9abaf332ed332278cc08d8ec929e564740accb64
+manifest_hash: 45a5d6c2faeefcca6d289a2824633b061d1da3333381af62d7f4539e1d37abc4
 target: esp32p4
 version: 2.0.0

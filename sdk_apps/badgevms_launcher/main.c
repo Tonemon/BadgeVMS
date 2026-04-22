@@ -7,6 +7,7 @@
 #include <badgevms/compositor.h>
 #include <badgevms/event.h>
 #include <badgevms/keyboard.h>
+#include <badgevms/wifi.h>
 #include <string.h>
 
 #include <badgevms/process.h>
@@ -915,11 +916,14 @@ int main(int argc, char *argv[]) {
                     if (cfg_json) {
                         cJSON *lda = cJSON_GetObjectItem(cfg_json, "launch_default_app");
                         cJSON *da  = cJSON_GetObjectItem(cfg_json, "default_app");
+                        cJSON *hn  = cJSON_GetObjectItem(cfg_json, "hostname");
                         if (cJSON_IsBool(lda) && cJSON_IsTrue(lda))
                             launch_default_app = true;
                         if (cJSON_IsString(da) && da->valuestring)
                             strncpy(default_app_uid, da->valuestring,
                                     sizeof(default_app_uid) - 1);
+                        if (cJSON_IsString(hn) && hn->valuestring && hn->valuestring[0])
+                            wifi_set_hostname(hn->valuestring);
                         cJSON_Delete(cfg_json);
                     }
                 }
