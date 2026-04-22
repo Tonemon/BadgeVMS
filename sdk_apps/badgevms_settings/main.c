@@ -1699,12 +1699,19 @@ static void handle_key_app_chooser(app_context *ctx, SDL_Keycode key) {
             ctx->chooser_selected--;
             if (ctx->chooser_selected < ctx->chooser_scroll)
                 ctx->chooser_scroll = ctx->chooser_selected;
+        } else {
+            ctx->chooser_selected = ctx->chooser_app_count - 1;
+            ctx->chooser_scroll   = (ctx->chooser_app_count > ctx->chooser_items_per_page)
+                                     ? ctx->chooser_app_count - ctx->chooser_items_per_page : 0;
         }
     } else if (key == SDLK_DOWN) {
         if (ctx->chooser_selected < ctx->chooser_app_count - 1) {
             ctx->chooser_selected++;
             if (ctx->chooser_selected >= ctx->chooser_scroll + ctx->chooser_items_per_page)
                 ctx->chooser_scroll = ctx->chooser_selected - ctx->chooser_items_per_page + 1;
+        } else {
+            ctx->chooser_selected = 0;
+            ctx->chooser_scroll   = 0;
         }
     } else if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
         /* Save selection */
@@ -1783,9 +1790,13 @@ static void handle_key_event(app_context *ctx, SDL_Event *event) {
             if (key == SDLK_UP) {
                 if (ctx->selected_item > 0)
                     ctx->selected_item--;
+                else
+                    ctx->selected_item = ctx->total_items - 1;
             } else if (key == SDLK_DOWN) {
                 if (ctx->selected_item < ctx->total_items - 1)
                     ctx->selected_item++;
+                else
+                    ctx->selected_item = 0;
             } else if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
                 switch (ctx->selected_item) {
                     case 0: nav_push(ctx, SCREEN_WIFI); break;
@@ -1842,6 +1853,10 @@ static void handle_key_event(app_context *ctx, SDL_Event *event) {
                     if (ctx->selected_item < ctx->scroll_offset) {
                         ctx->scroll_offset = ctx->selected_item;
                     }
+                } else {
+                    ctx->selected_item = ctx->network_count - 1;
+                    ctx->scroll_offset = (ctx->network_count > ctx->items_per_page)
+                                         ? ctx->network_count - ctx->items_per_page : 0;
                 }
             } else if (key == SDLK_DOWN) {
                 if (ctx->selected_item < ctx->network_count - 1) {
@@ -1849,6 +1864,9 @@ static void handle_key_event(app_context *ctx, SDL_Event *event) {
                     if (ctx->selected_item >= ctx->scroll_offset + ctx->items_per_page) {
                         ctx->scroll_offset = ctx->selected_item - ctx->items_per_page + 1;
                     }
+                } else {
+                    ctx->selected_item = 0;
+                    ctx->scroll_offset = 0;
                 }
             } else if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
                 ctx->selected_network = ctx->selected_item;

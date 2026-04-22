@@ -499,6 +499,9 @@ static void handle_keyboard(Launcher_Context *ctx, keyboard_scancode_t key_code)
                 if (ctx->selected_item < ctx->scroll_offset) {
                     ctx->scroll_offset = ctx->selected_item;
                 }
+            } else {
+                ctx->selected_item = total - 1;
+                ctx->scroll_offset = (total > ctx->items_per_page) ? total - ctx->items_per_page : 0;
             }
             break;
 
@@ -508,6 +511,9 @@ static void handle_keyboard(Launcher_Context *ctx, keyboard_scancode_t key_code)
                 if (ctx->selected_item >= ctx->scroll_offset + ctx->items_per_page) {
                     ctx->scroll_offset = ctx->selected_item - ctx->items_per_page + 1;
                 }
+            } else {
+                ctx->selected_item = 0;
+                ctx->scroll_offset = 0;
             }
             break;
 
