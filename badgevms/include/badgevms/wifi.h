@@ -92,7 +92,9 @@ wifi_connection_status_t wifi_disconnect();
 
 void wifi_scan_free_station(wifi_station_handle station);
 
+void                wifi_scan_start(void);
 int                 wifi_scan_get_num_results();
+int                 wifi_scan_get_cached_num_results(void);
 wifi_station_handle wifi_scan_get_result(int num);
 
 char const      *wifi_station_get_ssid(wifi_station_handle station);
@@ -103,3 +105,4 @@ int              wifi_station_get_rssi(wifi_station_handle station);
 wifi_auth_mode_t wifi_station_get_mode(wifi_station_handle station);
 bool             wifi_station_wps(wifi_station_handle station);
 bool             wifi_set_connection_parameters(char const *ssid, char const *password);
+void             wifi_set_hostname(char const *hostname);

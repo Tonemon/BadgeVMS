@@ -53,7 +53,6 @@ void touch_hal_config_controller(const touch_hal_config_t *cfg)
         touch_ll_set_charge_times(i, cfg->sample_cfg[i].charge_times);
         touch_ll_sample_cfg_set_rc_filter(i, cfg->sample_cfg[i].rc_filter_cap, cfg->sample_cfg[i].rc_filter_res);
         touch_ll_sample_cfg_set_driver(i, cfg->sample_cfg[i].low_drv, cfg->sample_cfg[i].high_drv);
-        touch_ll_sample_cfg_bypass_shield_output(i, cfg->sample_cfg[i].bypass_shield_output);
         touch_ll_sample_cfg_set_bias_voltage(i, cfg->sample_cfg[i].bias_volt);
     }
 #else

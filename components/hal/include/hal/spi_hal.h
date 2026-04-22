@@ -177,7 +177,8 @@ void spi_hal_init(spi_hal_context_t *hal, uint32_t host_id);
  * @param hal Context of the HAL layer.
  * @param level IO level to config
  */
-void spi_hal_config_io_default_level(spi_hal_context_t *hal, bool level);
+void spi_hal_set_data_pin_idle_level(spi_hal_context_t *hal, bool level);
+#define spi_hal_config_io_default_level spi_hal_set_data_pin_idle_level  /* renamed in IDF */
 
 /**
  * Deinit the peripheral (and the context if needed).
@@ -343,6 +344,12 @@ void spi_hal_sct_deinit(spi_hal_context_t *hal);
 void spi_hal_sct_set_conf_bits_len(spi_hal_context_t *hal, uint32_t conf_len);
 
 /**
+ * Set conf_bitslen base to HW for sct, only supported on s2.
+ */
+#define spi_hal_sct_setup_conf_base(hal, conf_base)     spi_ll_set_conf_base_bitslen((hal)->hw, conf_base)
+#endif  //#if SOC_SPI_SCT_SUPPORTED
+
+/**
  * Clear SPI interrupt bits by mask
  */
 void spi_hal_clear_intr_mask(spi_hal_context_t *hal, uint32_t mask);
@@ -352,11 +359,6 @@ void spi_hal_clear_intr_mask(spi_hal_context_t *hal, uint32_t mask);
  */
 bool spi_hal_get_intr_mask(spi_hal_context_t *hal, uint32_t mask);
 
-/**
- * Set conf_bitslen base to HW for sct, only supported on s2.
- */
-#define spi_hal_sct_setup_conf_base(hal, conf_base)     spi_ll_set_conf_base_bitslen((hal)->hw, conf_base)
-#endif  //#if SOC_SPI_SCT_SUPPORTED
 #endif  //#if SOC_GPSPI_SUPPORTED
 
 #ifdef __cplusplus

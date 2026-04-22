@@ -937,9 +937,12 @@ simple_function:
   - wifi_get_connection_status
   - wifi_get_status
   - wifi_scan_free_station
+  - wifi_scan_start
   - wifi_scan_get_num_results
+  - wifi_scan_get_cached_num_results
   - wifi_scan_get_result
   - wifi_set_connection_parameters
+  - wifi_set_hostname
   - wifi_station_get_bssid
   - wifi_station_get_mode
   - wifi_station_get_primary_channel

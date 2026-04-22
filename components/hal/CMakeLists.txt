@@ -4,9 +4,13 @@ idf_build_get_property(esp_tee_build ESP_TEE_BUILD)
 set(srcs "hal_utils.c")
 set(includes "platform_port/include")
 
-# target specific include must be added before the generic one
-# because of the "include_next" directive used by the efuse_hal.h
-list(APPEND includes "${target}/include")
+# Firmware-specific overrides take priority; IDF's target HAL provides everything else.
+# The "include_next" directive in efuse_hal.h requires target-specific paths before generic.
+# Only add the local target/include if it actually exists (it may be empty/absent after cleanup).
+if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/${target}/include")
+    list(APPEND includes "${target}/include")
+endif()
+list(APPEND includes "$ENV{IDF_PATH}/components/hal/${target}/include")
 
 list(APPEND includes "include")
 
@@ -353,7 +357,22 @@ elseif(NOT BOOTLOADER_BUILD)
 
 endif()
 
-idf_component_register(SRCS ${srcs}
+# For each source, prefer the firmware's local copy; fall back to IDF's.
+# This lets us delete trivial copies and have IDF's authoritative version used automatically.
+set(resolved_srcs)
+foreach(src ${srcs})
+    if(IS_ABSOLUTE "${src}")
+        list(APPEND resolved_srcs "${src}")
+    elseif(EXISTS "${CMAKE_CURRENT_LIST_DIR}/${src}")
+        list(APPEND resolved_srcs "${src}")
+    elseif(EXISTS "$ENV{IDF_PATH}/components/hal/${src}")
+        list(APPEND resolved_srcs "$ENV{IDF_PATH}/components/hal/${src}")
+    else()
+        message(FATAL_ERROR "HAL source not found in firmware or IDF: ${src}")
+    endif()
+endforeach()
+
+idf_component_register(SRCS ${resolved_srcs}
                        INCLUDE_DIRS ${includes}
                        PRIV_INCLUDE_DIRS ${priv_include}
                        REQUIRES soc esp_rom

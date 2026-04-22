@@ -1,8 +1,8 @@
 {
     "unique_identifier": "badgevms_settings",
     "name": "Settings",
-    "author": "Team:Badge",
-    "version": "2",
+    "author": "Team:Badge & contributors",
+    "version": "2.1",
     "interpreter": "",
     "metadata_file": "",
     "binary_path": "badgevms_settings.elf",

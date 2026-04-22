@@ -3,7 +3,7 @@
 BadgeVMS is the badge OS for the WHY2025 hacker camp. It runs on an ESP32P4-based badge and provides a multi-process environment where each program gets its own isolated virtual address space.
 
 **License**: GPL v3  
-**Build system**: ESP-IDF 5.5 + CMake (target: esp32p4)  
+**Build system**: ESP-IDF 5.5.4+ + CMake (target: esp32p4)  
 **Build command**: `idf.py build flash monitor`  
 **After `git pull`**: always run `idf.py fullclean` to pick up sdkconfig.defaults changes.
 
@@ -60,7 +60,19 @@ Dual OTA partitions allow safe over-the-air updates; the init system marks the p
 
 ## Build Environment Setup
 
-The ESP-IDF toolchain is installed at `~/esp/esp-idf` but is **not on the default PATH**. Before running any `idf.py` command in a fresh shell, source the export script:
+**Required IDF version: 5.5.4.** The firmware uses APIs introduced after v5.5.0 and the `dependencies.lock` is pinned to this version. Building with an older version will fail at the CMake dependency resolution step.
+
+To install IDF 5.5.4 from scratch, follow the [Espressif get-started guide](https://docs.espressif.com/projects/esp-idf/en/stable/esp32/get-started/index.html). To upgrade an existing installation:
+
+```bash
+cd ~/esp/esp-idf
+git fetch --tags
+git checkout v5.5.4
+git submodule update --init --recursive
+./install.sh esp32p4,esp32c6
+```
+
+The toolchain is **not on the default PATH**. Before running any `idf.py` command in a fresh shell, source the export script:
 
 ```bash
 . $HOME/esp/esp-idf/export.sh

@@ -196,7 +196,7 @@ inline static void * esp_ptr_diram_iram_to_dram(const void *p) {
 #endif
 }
 
-#if SOC_MEM_TCM_SUPPORTED
+#if SOC_MEM_TCM_SUPPORTED || SOC_MEM_SPM_SUPPORTED
 /**
  * @brief Check if the pointer is in TCM
  *
@@ -208,7 +208,7 @@ __attribute__((always_inline))
 inline static bool esp_ptr_in_tcm(const void *p) {
     return ((intptr_t)p >= SOC_TCM_LOW && (intptr_t)p < SOC_TCM_HIGH);
 }
-#endif  //#if SOC_MEM_TCM_SUPPORTED
+#endif  //#if SOC_MEM_TCM_SUPPORTED || SOC_MEM_SPM_SUPPORTED || SOC_MEM_SPM_SUPPORTED
 
 /** End of common functions to be kept in sync with bootloader_memory_utils.h **/
 /** Add app-specific functions below **/

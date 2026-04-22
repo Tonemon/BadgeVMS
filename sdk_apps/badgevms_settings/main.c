@@ -80,6 +80,7 @@ typedef struct {
 
     wifi_network *networks;
     int           network_count;
+    bool          scanning;
     bool          show_password_dialog;
     bool          show_connecting_dialog;
     int           selected_network;
@@ -118,9 +119,37 @@ typedef struct {
     /* uid→name lookup built during reorder_init */
     app_name_entry_t     *app_name_table;
     int                   app_name_count;
+
+    /* Launcher config (read from APPS:[badgevms_launcher]config.json) */
+    bool  launch_default_app;
+    char  launcher_default_uid[64];   /* UID of default app */
+    char  launcher_default_name[64];  /* display name, looked up via application_list */
+
+    /* App-chooser dialog (opened from "Default app" settings entry) */
+    bool              show_app_chooser;
+    app_name_entry_t *chooser_apps;
+    int               chooser_app_count;
+    int               chooser_selected;
+    int               chooser_scroll;
+    int               chooser_items_per_page;
+
+    /* Badge identity (read/written to launcher config.json) */
+    char hostname[128];
+    char badge_owner_name[64];
+    bool display_username_at_boot;
+
+    /* Generic text input dialog */
+    bool  show_text_input_dialog;
+    char  text_input_title[64];
+    char  text_input_buffer[128];
+    int   text_input_cursor;
+    char *text_input_dest;   /* points into badge_owner_name or hostname */
+    int   text_input_max_len;
 } app_context;
 
 static void render_screen(app_context *ctx);
+static void app_chooser_close(app_context *ctx);
+static void draw_text_input_dialog(app_context *ctx);
 
 static inline uint16_t rgb888_to_rgb565_color(uint32_t rgb888) {
     uint8_t r = (rgb888 >> 16) & 0xFF;
@@ -244,7 +273,7 @@ static void draw_signal_strength(app_context *ctx, int x, int y, int strength) {
 }
 
 static void populate_wifi_networks(app_context *ctx) {
-    ctx->network_count = wifi_scan_get_num_results();
+    ctx->network_count = wifi_scan_get_cached_num_results();
     free(ctx->networks);
     ctx->networks = calloc(ctx->network_count, sizeof(wifi_network));
 
@@ -732,6 +761,248 @@ static void draw_reorder_screen(app_context *ctx) {
         draw_reorder_dialog(ctx);
 }
 
+static void app_chooser_open(app_context *ctx) {
+    app_chooser_close(ctx); /* free any prior allocation if called while open */
+
+    /* Populate chooser_apps from installed app list, excluding the launcher itself */
+    ctx->chooser_app_count = 0;
+    ctx->chooser_apps      = NULL;
+
+    application_t          *app;
+    application_list_handle handle = application_list(&app);
+    while (app) {
+        if (app->unique_identifier &&
+            strcmp(app->unique_identifier, "badgevms_launcher") != 0 &&
+            strcmp(app->unique_identifier, "why2025_firmware_ota_c6") != 0 &&
+            app->binary_path && strlen(app->binary_path) > 0) {
+
+            app_name_entry_t *tmp = realloc(ctx->chooser_apps,
+                (size_t)(ctx->chooser_app_count + 1) * sizeof(app_name_entry_t));
+            if (tmp) {
+                ctx->chooser_apps = tmp;
+                strncpy(ctx->chooser_apps[ctx->chooser_app_count].uid,
+                        app->unique_identifier,
+                        sizeof(ctx->chooser_apps[0].uid) - 1);
+                ctx->chooser_apps[ctx->chooser_app_count].uid[sizeof(ctx->chooser_apps[0].uid) - 1] = '\0';
+                strncpy(ctx->chooser_apps[ctx->chooser_app_count].name,
+                        app->name ? app->name : app->unique_identifier,
+                        sizeof(ctx->chooser_apps[0].name) - 1);
+                ctx->chooser_apps[ctx->chooser_app_count].name[sizeof(ctx->chooser_apps[0].name) - 1] = '\0';
+                ctx->chooser_app_count++;
+            }
+        }
+        app = application_list_get_next(handle);
+    }
+    application_list_close(handle);
+
+    /* Pre-select the currently configured app, if present */
+    ctx->chooser_selected = 0;
+    for (int i = 0; i < ctx->chooser_app_count; i++) {
+        if (strcmp(ctx->chooser_apps[i].uid, ctx->launcher_default_uid) == 0) {
+            ctx->chooser_selected = i;
+            break;
+        }
+    }
+    ctx->chooser_scroll          = 0;
+    ctx->chooser_items_per_page  = 8;
+    /* Scroll so pre-selected item is visible */
+    if (ctx->chooser_selected >= ctx->chooser_items_per_page)
+        ctx->chooser_scroll = ctx->chooser_selected - ctx->chooser_items_per_page + 1;
+
+    ctx->show_app_chooser = true;
+}
+
+static void app_chooser_close(app_context *ctx) {
+    free(ctx->chooser_apps);
+    ctx->chooser_apps      = NULL;
+    ctx->chooser_app_count = 0;
+    ctx->show_app_chooser  = false;
+}
+
+static void launcher_config_load(app_context *ctx) {
+    ctx->launch_default_app       = false;
+    ctx->launcher_default_uid[0]  = '\0';
+    ctx->launcher_default_name[0] = '\0';
+    strncpy(ctx->hostname,        "why2025badge", sizeof(ctx->hostname) - 1);
+    strncpy(ctx->badge_owner_name, "John",            sizeof(ctx->badge_owner_name) - 1);
+    ctx->display_username_at_boot = false;
+
+    FILE *f = fopen("APPS:[badgevms_launcher]config.json", "r");
+    if (!f) return;
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    rewind(f);
+    if (sz <= 0 || sz > 4096) { fclose(f); return; }
+    char *buf = malloc((size_t)sz + 1);
+    if (!buf) { fclose(f); return; }
+    size_t n = fread(buf, 1, (size_t)sz, f);
+    buf[n] = '\0';
+    fclose(f);
+
+    cJSON *cfg = cJSON_Parse(buf);
+    free(buf);
+    if (!cfg) return;
+
+    cJSON *lda  = cJSON_GetObjectItem(cfg, "launch_default_app");
+    cJSON *da   = cJSON_GetObjectItem(cfg, "default_app");
+    cJSON *hn   = cJSON_GetObjectItem(cfg, "hostname");
+    cJSON *bon  = cJSON_GetObjectItem(cfg, "badge_owner_name");
+    cJSON *dub  = cJSON_GetObjectItem(cfg, "display_username_at_boot");
+    if (cJSON_IsBool(lda))
+        ctx->launch_default_app = cJSON_IsTrue(lda);
+    if (cJSON_IsString(da) && da->valuestring)
+        strncpy(ctx->launcher_default_uid, da->valuestring,
+                sizeof(ctx->launcher_default_uid) - 1);
+    if (cJSON_IsString(hn) && hn->valuestring)
+        strncpy(ctx->hostname, hn->valuestring, sizeof(ctx->hostname) - 1);
+    if (cJSON_IsString(bon) && bon->valuestring)
+        strncpy(ctx->badge_owner_name, bon->valuestring, sizeof(ctx->badge_owner_name) - 1);
+    if (cJSON_IsBool(dub))
+        ctx->display_username_at_boot = cJSON_IsTrue(dub);
+    cJSON_Delete(cfg);
+
+    /* Resolve display name by walking the installed app list.
+     * We avoid application_get()+application_free() because application_free
+     * is not exported in the BadgeVMS runtime symbol table. */
+    if (ctx->launcher_default_uid[0]) {
+        application_t          *a;
+        application_list_handle h = application_list(&a);
+        while (a) {
+            if (a->unique_identifier &&
+                strcmp(a->unique_identifier, ctx->launcher_default_uid) == 0) {
+                if (a->name)
+                    strncpy(ctx->launcher_default_name, a->name,
+                            sizeof(ctx->launcher_default_name) - 1);
+                break;
+            }
+            a = application_list_get_next(h);
+        }
+        application_list_close(h);
+        /* Fall back to uid if display name not found */
+        if (!ctx->launcher_default_name[0])
+            strncpy(ctx->launcher_default_name, ctx->launcher_default_uid,
+                    sizeof(ctx->launcher_default_name) - 1);
+    }
+
+    wifi_set_hostname(ctx->hostname);
+}
+
+static void launcher_config_save(app_context *ctx) {
+    cJSON *cfg = cJSON_CreateObject();
+    if (!cfg) return;
+    cJSON_AddBoolToObject(cfg,   "launch_default_app",       ctx->launch_default_app);
+    cJSON_AddStringToObject(cfg, "default_app",              ctx->launcher_default_uid);
+    cJSON_AddStringToObject(cfg, "hostname",                 ctx->hostname);
+    cJSON_AddStringToObject(cfg, "badge_owner_name",         ctx->badge_owner_name);
+    cJSON_AddBoolToObject(cfg,   "display_username_at_boot", ctx->display_username_at_boot);
+    char *json_str = cJSON_Print(cfg);
+    cJSON_Delete(cfg);
+    if (!json_str) return;
+    FILE *f = fopen("APPS:[badgevms_launcher]config.json", "w");
+    if (f) { fputs(json_str, f); fclose(f); }
+    free(json_str);
+
+    /* Push the hostname into the network stack immediately */
+    wifi_set_hostname(ctx->hostname);
+}
+
+static void draw_app_chooser_dialog(app_context *ctx) {
+    int dialog_w = 500;
+    int dialog_h = 420;
+    int dialog_x = (SCREEN_WIDTH  - dialog_w) / 2;
+    int dialog_y = (SCREEN_HEIGHT - dialog_h) / 2;
+
+    /* Drop shadow */
+    draw_rect(ctx, dialog_x + 5, dialog_y + 5, dialog_w, dialog_h, 0x505050);
+
+    /* Panel */
+    draw_rect(ctx, dialog_x, dialog_y, dialog_w, dialog_h, CDE_PANEL_COLOR);
+    draw_3d_border(ctx, dialog_x, dialog_y, dialog_w, dialog_h, 0);
+
+    /* Title bar */
+    int title_h = 30;
+    draw_rect(ctx, dialog_x + 2, dialog_y + 2, dialog_w - 4, title_h, CDE_TITLE_BG);
+    draw_text_bold(ctx, dialog_x + 10, dialog_y + 8, "Select Default App", CDE_SELECTED_TEXT);
+
+    /* App list */
+    int list_x      = dialog_x + 10;
+    int list_y      = dialog_y + title_h + 8;
+    int list_w      = dialog_w - 20;
+    int list_h      = dialog_h - title_h - 50;
+    int item_height = 40;
+    ctx->chooser_items_per_page = list_h / item_height;
+
+    draw_rect(ctx, list_x, list_y, list_w, list_h, 0xFFFFFF);
+    draw_3d_border(ctx, list_x, list_y, list_w, list_h, 1);
+
+    int visible_start = ctx->chooser_scroll;
+    int visible_end   = visible_start + ctx->chooser_items_per_page;
+    if (visible_end > ctx->chooser_app_count)
+        visible_end = ctx->chooser_app_count;
+
+    for (int i = visible_start; i < visible_end; i++) {
+        int row_y = list_y + 3 + (i - visible_start) * item_height;
+        int row_x = list_x + 3;
+        int row_w = list_w - 6;
+
+        bool selected = (i == ctx->chooser_selected);
+        if (selected)
+            draw_rect(ctx, row_x, row_y, row_w, item_height - 2, CDE_SELECTED_BG);
+
+        uint32_t text_color = selected ? CDE_SELECTED_TEXT : CDE_TEXT_COLOR;
+        draw_text_bold(ctx, row_x + 8, row_y + 10, ctx->chooser_apps[i].name, text_color);
+
+        if (i < visible_end - 1)
+            draw_rect(ctx, row_x, row_y + item_height - 2, row_w, 1, CDE_BORDER_DARK);
+    }
+
+    /* Footer */
+    int footer_y = dialog_y + dialog_h - 38;
+    draw_rect(ctx, dialog_x + 2, footer_y, dialog_w - 4, 36, CDE_BUTTON_COLOR);
+    draw_3d_border(ctx, dialog_x + 2, footer_y, dialog_w - 4, 36, 1);
+    draw_text(ctx, dialog_x + 10, footer_y + 8,
+              "UP/DOWN: Navigate  ENTER: Select  ESC: Cancel",
+              CDE_TEXT_COLOR);
+}
+
+static void draw_text_input_dialog(app_context *ctx) {
+    int dialog_w = 520;
+    int dialog_h = 190;
+    int dialog_x = (SCREEN_WIDTH  - dialog_w) / 2;
+    int dialog_y = (SCREEN_HEIGHT - dialog_h) / 2;
+
+    /* Drop shadow */
+    draw_rect(ctx, dialog_x + 5, dialog_y + 5, dialog_w, dialog_h, 0x505050);
+    /* Panel */
+    draw_rect(ctx, dialog_x, dialog_y, dialog_w, dialog_h, CDE_PANEL_COLOR);
+    draw_3d_border(ctx, dialog_x, dialog_y, dialog_w, dialog_h, 0);
+    /* Title bar */
+    int title_h = 30;
+    draw_rect(ctx, dialog_x + 2, dialog_y + 2, dialog_w - 4, title_h, CDE_TITLE_BG);
+    draw_text_bold(ctx, dialog_x + 10, dialog_y + 8, ctx->text_input_title, CDE_SELECTED_TEXT);
+
+    /* Input field */
+    int field_x = dialog_x + 15;
+    int field_y = dialog_y + title_h + 18;
+    int field_w = dialog_w - 30;
+    int field_h = 38;
+    draw_rect(ctx, field_x, field_y, field_w, field_h, 0xFFFFFF);
+    draw_3d_border(ctx, field_x, field_y, field_w, field_h, 1);
+
+    /* Text with blinking cursor marker */
+    char display[130];
+    snprintf(display, sizeof(display), "%s|", ctx->text_input_buffer);
+    draw_text(ctx, field_x + 8, field_y + 9, display, CDE_TEXT_COLOR);
+
+    /* Footer */
+    int footer_y = dialog_y + dialog_h - 42;
+    draw_rect(ctx, dialog_x + 2, footer_y, dialog_w - 4, 40, CDE_BUTTON_COLOR);
+    draw_3d_border(ctx, dialog_x + 2, footer_y, dialog_w - 4, 40, 1);
+    draw_text(ctx, dialog_x + 10, footer_y + 10,
+              "Type to edit  ENTER: Confirm  ESC: Cancel",
+              CDE_TEXT_COLOR);
+}
+
 static void draw_main_settings(app_context *ctx) {
     int window_x = 30;
     int window_y = 30;
@@ -747,18 +1018,29 @@ static void draw_main_settings(app_context *ctx) {
     draw_rect(ctx, window_x + 3, window_y + 3, window_w - 6, title_h, CDE_TITLE_BG);
     draw_text_bold(ctx, window_x + 15, window_y + 11, "System Settings", CDE_SELECTED_TEXT);
 
-    // char const *categories[]   = {"WiFi Settings", "Display Settings", "System Information", "About"};
-    char const *categories[]   = {"WiFi Settings", "Reorder Apps", "About"};
+    char const *categories[]   = {
+        "WiFi Settings",
+        "Badge owner name",
+        "Hostname",
+        "Display username at boot",
+        "Reorder Apps",
+        "Default app",
+        "About"
+    };
     char const *descriptions[] = {
         "Configure wireless network connection",
+        "Your name displayed at boot and in apps",
+        "Network hostname of this badge",
+        "Show your name during the boot sequence",
         "Organise launcher home screen and folders",
-        "Application version and credits"
+        "The application launched at boot",
+        "Badge specifications"
     };
-    ctx->total_items = 3;
+    ctx->total_items = 7;
 
     int list_y      = window_y + title_h + 20;
     int list_h      = window_h - title_h - 80;
-    int item_height = 80;
+    int item_height = 70;
 
     draw_rect(ctx, window_x + 15, list_y, window_w - 30, list_h, 0xFFFFFF);
     draw_3d_border(ctx, window_x + 15, list_y, window_w - 30, list_h, 1);
@@ -784,23 +1066,58 @@ static void draw_main_settings(app_context *ctx) {
         draw_3d_border(ctx, icon_x, icon_y_pos, icon_size, icon_size, 1);
 
         int text_x = icon_x + icon_size + 15;
-        draw_text_bold(ctx, text_x, item_y + 15, categories[i], text_color);
-        draw_text(ctx, text_x, item_y + 45, descriptions[i], desc_color);
+        draw_text_bold(ctx, text_x, item_y + 12, categories[i], text_color);
+        draw_text(ctx, text_x, item_y + 40, descriptions[i], desc_color);
+
+        uint32_t val_color = (i == ctx->selected_item) ? CDE_SELECTED_TEXT : CDE_INACTIVE_TEXT;
+
+        if (i == 1) { /* Badge owner name: right-aligned current value */
+            const char *val = ctx->badge_owner_name[0] ? ctx->badge_owner_name : "(not set)";
+            int val_x = item_x + item_w - get_text_width(val) - 15;
+            draw_text(ctx, val_x, item_y + 12, val, val_color);
+        } else if (i == 2) { /* Hostname: right-aligned current value */
+            const char *val = ctx->hostname[0] ? ctx->hostname : "(not set)";
+            int val_x = item_x + item_w - get_text_width(val) - 15;
+            draw_text(ctx, val_x, item_y + 12, val, val_color);
+        } else if (i == 3) { /* Display username at boot: inline [ON]/[OFF] */
+            int title_w    = get_text_width(categories[i]);
+            int toggle_x   = text_x + title_w + 2 * FONT_WIDTH;
+            const char *toggle_str = ctx->display_username_at_boot ? "[ON]" : "[OFF]";
+            uint32_t toggle_color = (i == ctx->selected_item)
+                ? CDE_SELECTED_TEXT
+                : (ctx->display_username_at_boot ? CDE_SUCCESS_COLOR : CDE_INACTIVE_TEXT);
+            draw_text_bold(ctx, toggle_x, item_y + 12, toggle_str, toggle_color);
+        } else if (i == 5) { /* Default app: inline [ON]/[OFF] + right-aligned app name */
+            int title_w    = get_text_width(categories[i]);
+            int toggle_x   = text_x + title_w + 2 * FONT_WIDTH;
+            const char *toggle_str = ctx->launch_default_app ? "[ON]" : "[OFF]";
+            uint32_t toggle_color = (i == ctx->selected_item)
+                ? CDE_SELECTED_TEXT
+                : (ctx->launch_default_app ? CDE_SUCCESS_COLOR : CDE_INACTIVE_TEXT);
+            draw_text_bold(ctx, toggle_x, item_y + 12, toggle_str, toggle_color);
+
+            const char *app_name = ctx->launcher_default_name[0]
+                ? ctx->launcher_default_name : "(none)";
+            int name_x = item_x + item_w - get_text_width(app_name) - 15;
+            draw_text(ctx, name_x, item_y + 12, app_name, val_color);
+        }
 
         if (i < ctx->total_items - 1) {
             draw_rect(ctx, item_x, item_y + item_height - 2, item_w, 1, CDE_BORDER_DARK);
         }
     }
 
+    /* Dynamic footer hint */
+    const char *footer_hint;
+    if (ctx->selected_item == 3)
+        footer_hint = "UP/DOWN: Navigate  ENTER/SPACE: Toggle  ESC: Exit";
+    else if (ctx->selected_item == 5)
+        footer_hint = "UP/DOWN: Navigate  ENTER: Choose  SPACE: Toggle  ESC: Exit";
+    else
+        footer_hint = "UP/DOWN: Navigate  ENTER: Select  ESC: Exit";
     draw_rect(ctx, window_x + 3, window_y + window_h - 42, window_w - 6, 39, CDE_BUTTON_COLOR);
     draw_3d_border(ctx, window_x + 3, window_y + window_h - 42, window_w - 6, 39, 1);
-    draw_text(
-        ctx,
-        window_x + 15,
-        window_y + window_h - 35,
-        "UP/DOWN: Navigate  ENTER: Select  ESC: Exit",
-        CDE_TEXT_COLOR
-    );
+    draw_text(ctx, window_x + 15, window_y + window_h - 35, footer_hint, CDE_TEXT_COLOR);
 }
 
 static void draw_wifi_settings(app_context *ctx) {
@@ -896,16 +1213,24 @@ static void draw_wifi_settings(app_context *ctx) {
         draw_3d_border(ctx, scrollbar_x + 3, thumb_y, 14, thumb_h, 0);
     }
 
+    if (ctx->scanning) {
+        int cached = wifi_scan_get_cached_num_results();
+        if (cached > 0) {
+            populate_wifi_networks(ctx);
+            ctx->scanning = false;
+        } else {
+            draw_text_centered(ctx, window_x + 15, list_y + list_h / 2 - FONT_HEIGHT / 2,
+                               window_w - 30, "Scanning...", CDE_INACTIVE_TEXT);
+        }
+    }
+
     draw_rect(ctx, window_x + 3, window_y + window_h - 42, window_w - 6, 39, CDE_BUTTON_COLOR);
     draw_3d_border(ctx, window_x + 3, window_y + window_h - 42, window_w - 6, 39, 1);
 
-    if (!ctx->network_count && (SDL_GetTicks() >= ctx->status_timer)) {
-        ctx->status_timer = SDL_GetTicks() + 3000;
-        strcpy(ctx->status_message, "Scanning for networks...");
-    }
-
     if (ctx->status_message[0] && SDL_GetTicks() < ctx->status_timer) {
         draw_text(ctx, window_x + 15, window_y + window_h - 35, ctx->status_message, ctx->status_color);
+    } else if (ctx->scanning) {
+        draw_text(ctx, window_x + 15, window_y + window_h - 35, "Scanning...", CDE_INACTIVE_TEXT);
     } else {
         draw_text(
             ctx,
@@ -914,10 +1239,6 @@ static void draw_wifi_settings(app_context *ctx) {
             "UP/DOWN: Navigate  ENTER: Go  S: Scan  ESC: Back",
             CDE_TEXT_COLOR
         );
-    }
-
-    if (!ctx->network_count) {
-        populate_wifi_networks(ctx);
     }
 }
 
@@ -1007,26 +1328,52 @@ static void draw_password_dialog(app_context *ctx) {
 }
 
 static void draw_about_dialog(app_context *ctx) {
-    int dialog_w = 450;
-    int dialog_h = 250;
-    int dialog_x = (SCREEN_WIDTH - dialog_w) / 2;
+    int dialog_w = 640;
+    int dialog_h = 460;
+    int dialog_x = (SCREEN_WIDTH  - dialog_w) / 2;
     int dialog_y = (SCREEN_HEIGHT - dialog_h) / 2;
 
     draw_rect(ctx, dialog_x + 5, dialog_y + 5, dialog_w, dialog_h, 0x505050);
-
     draw_rect(ctx, dialog_x, dialog_y, dialog_w, dialog_h, CDE_PANEL_COLOR);
     draw_3d_border(ctx, dialog_x, dialog_y, dialog_w, dialog_h, 0);
 
     int title_h = 30;
     draw_rect(ctx, dialog_x + 2, dialog_y + 2, dialog_w - 4, title_h, CDE_TITLE_BG);
-    draw_text_bold(ctx, dialog_x + 10, dialog_y + 8, "About Settings", CDE_SELECTED_TEXT);
+    draw_text_bold(ctx, dialog_x + 10, dialog_y + 8, "About the WHY2025 Badge", CDE_SELECTED_TEXT);
 
-    int content_y = dialog_y + title_h + 30;
-    draw_text_centered(ctx, dialog_x, content_y, dialog_w, "System Settings", CDE_TEXT_COLOR);
-    draw_text_centered(ctx, dialog_x, content_y + 30, dialog_w, "Version 1.0", CDE_TEXT_COLOR);
-    draw_text_centered(ctx, dialog_x, content_y + 60, dialog_w, "BadgeVMS system settings", CDE_INACTIVE_TEXT);
+    int x  = dialog_x + 20;
+    int lh = FONT_HEIGHT + 6;
+    int y  = dialog_y + title_h + 12;
 
-    draw_text_centered(ctx, dialog_x, content_y + 120, dialog_w, "Press ENTER or ESC to close", CDE_INACTIVE_TEXT);
+    draw_text_bold(ctx, x, y, "Compute Module", CDE_SELECTED_TEXT);
+    y += lh;
+    draw_text(ctx, x + 12, y, "ESP32-P4  -  Main processor", CDE_TEXT_COLOR);
+    y += lh;
+    draw_text(ctx, x + 12, y, "SD Slot   -  Additional storage", CDE_TEXT_COLOR);
+    y += lh + 6;
+
+    draw_text_bold(ctx, x, y, "Carrier Board", CDE_SELECTED_TEXT);
+    y += lh;
+    draw_text(ctx, x + 12, y, "ESP32-C6  -  Wi-Fi 6 / BLE 5.3", CDE_TEXT_COLOR);
+    y += lh;
+    draw_text(ctx, x + 12, y, "RA-01H    -  LoRa module", CDE_TEXT_COLOR);
+    y += lh;
+    draw_text(ctx, x + 12, y, "Display   -  4\" 720x720 IPS MIPI DSI", CDE_TEXT_COLOR);
+    y += lh;
+    draw_text(ctx, x + 12, y, "BMI270    -  Accelerometer & gyroscope", CDE_TEXT_COLOR);
+    y += lh;
+    draw_text(ctx, x + 12, y, "BME690    -  Air quality, temperature, humidity", CDE_TEXT_COLOR);
+    y += lh;
+    draw_text(ctx, x + 12, y, "18650     -  Dual Li-Ion cells", CDE_TEXT_COLOR);
+    y += lh;
+    draw_text(ctx, x + 12, y, "GPIO      -  Expansion headers", CDE_TEXT_COLOR);
+    y += lh;
+    draw_text(ctx, x + 12, y, "Pogo-pin  -  Frontpanel connector", CDE_TEXT_COLOR);
+    y += lh + 6;
+
+    draw_rect(ctx, dialog_x + 15, y, dialog_w - 30, 1, CDE_BORDER_DARK);
+    y += 8;
+    draw_text_centered(ctx, dialog_x, y, dialog_w, "ENTER or ESC to close", CDE_INACTIVE_TEXT);
 }
 
 static void attempt_wifi_connection(app_context *ctx) {
@@ -1355,8 +1702,80 @@ static void handle_key_reorder(app_context *ctx, SDL_Event *event) {
     }
 }
 
+static void handle_key_app_chooser(app_context *ctx, SDL_Keycode key) {
+    if (ctx->chooser_app_count == 0) {
+        if (key == SDLK_ESCAPE || key == SDLK_RETURN || key == SDLK_KP_ENTER)
+            app_chooser_close(ctx);
+        return;
+    }
+
+    if (key == SDLK_UP) {
+        if (ctx->chooser_selected > 0) {
+            ctx->chooser_selected--;
+            if (ctx->chooser_selected < ctx->chooser_scroll)
+                ctx->chooser_scroll = ctx->chooser_selected;
+        } else {
+            ctx->chooser_selected = ctx->chooser_app_count - 1;
+            ctx->chooser_scroll   = (ctx->chooser_app_count > ctx->chooser_items_per_page)
+                                     ? ctx->chooser_app_count - ctx->chooser_items_per_page : 0;
+        }
+    } else if (key == SDLK_DOWN) {
+        if (ctx->chooser_selected < ctx->chooser_app_count - 1) {
+            ctx->chooser_selected++;
+            if (ctx->chooser_selected >= ctx->chooser_scroll + ctx->chooser_items_per_page)
+                ctx->chooser_scroll = ctx->chooser_selected - ctx->chooser_items_per_page + 1;
+        } else {
+            ctx->chooser_selected = 0;
+            ctx->chooser_scroll   = 0;
+        }
+    } else if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
+        /* Save selection */
+        strncpy(ctx->launcher_default_uid,
+                ctx->chooser_apps[ctx->chooser_selected].uid,
+                sizeof(ctx->launcher_default_uid) - 1);
+        ctx->launcher_default_uid[sizeof(ctx->launcher_default_uid) - 1] = '\0';
+        strncpy(ctx->launcher_default_name,
+                ctx->chooser_apps[ctx->chooser_selected].name,
+                sizeof(ctx->launcher_default_name) - 1);
+        ctx->launcher_default_name[sizeof(ctx->launcher_default_name) - 1] = '\0';
+        launcher_config_save(ctx);
+        app_chooser_close(ctx);
+    } else if (key == SDLK_ESCAPE) {
+        app_chooser_close(ctx);
+    }
+}
+
 static void handle_key_event(app_context *ctx, SDL_Event *event) {
     SDL_Keycode key = event->key.key;
+
+    if (ctx->show_app_chooser) {
+        handle_key_app_chooser(ctx, key);
+        return;
+    }
+
+    if (ctx->show_text_input_dialog) {
+        if (event->type == SDL_EVENT_TEXT_INPUT) {
+            if (ctx->text_input_cursor < ctx->text_input_max_len) {
+                strncat(ctx->text_input_buffer, event->text.text,
+                        (size_t)(ctx->text_input_max_len - ctx->text_input_cursor));
+                ctx->text_input_cursor = (int)strlen(ctx->text_input_buffer);
+            }
+        } else if (key == SDLK_ESCAPE) {
+            ctx->show_text_input_dialog = false;
+        } else if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
+            strncpy(ctx->text_input_dest, ctx->text_input_buffer,
+                    (size_t)ctx->text_input_max_len);
+            ctx->text_input_dest[ctx->text_input_max_len] = '\0';
+            launcher_config_save(ctx);
+            ctx->show_text_input_dialog = false;
+        } else if (key == SDLK_BACKSPACE) {
+            if (ctx->text_input_cursor > 0) {
+                ctx->text_input_cursor--;
+                ctx->text_input_buffer[ctx->text_input_cursor] = '\0';
+            }
+        }
+        return;
+    }
 
     if (ctx->show_password_dialog) {
         if (key == SDLK_ESCAPE) {
@@ -1386,17 +1805,61 @@ static void handle_key_event(app_context *ctx, SDL_Event *event) {
             if (key == SDLK_UP) {
                 if (ctx->selected_item > 0)
                     ctx->selected_item--;
+                else
+                    ctx->selected_item = ctx->total_items - 1;
             } else if (key == SDLK_DOWN) {
                 if (ctx->selected_item < ctx->total_items - 1)
                     ctx->selected_item++;
+                else
+                    ctx->selected_item = 0;
             } else if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
                 switch (ctx->selected_item) {
-                    case 0: nav_push(ctx, SCREEN_WIFI); break;
-                    case 1:
+                    case 0:
+                        nav_push(ctx, SCREEN_WIFI);
+                        ctx->network_count = 0;
+                        ctx->scanning      = true;
+                        wifi_scan_start();
+                        break;
+                    case 1: /* Badge owner name: open text input */
+                        strncpy(ctx->text_input_title, "Badge Owner Name",
+                                sizeof(ctx->text_input_title) - 1);
+                        strncpy(ctx->text_input_buffer, ctx->badge_owner_name,
+                                sizeof(ctx->text_input_buffer) - 1);
+                        ctx->text_input_cursor  = (int)strlen(ctx->text_input_buffer);
+                        ctx->text_input_dest    = ctx->badge_owner_name;
+                        ctx->text_input_max_len = (int)(sizeof(ctx->badge_owner_name) - 1);
+                        ctx->show_text_input_dialog = true;
+                        break;
+                    case 2: /* Hostname: open text input */
+                        strncpy(ctx->text_input_title, "Hostname",
+                                sizeof(ctx->text_input_title) - 1);
+                        strncpy(ctx->text_input_buffer, ctx->hostname,
+                                sizeof(ctx->text_input_buffer) - 1);
+                        ctx->text_input_cursor  = (int)strlen(ctx->text_input_buffer);
+                        ctx->text_input_dest    = ctx->hostname;
+                        ctx->text_input_max_len = (int)(sizeof(ctx->hostname) - 1);
+                        ctx->show_text_input_dialog = true;
+                        break;
+                    case 3: /* Display username at boot: toggle */
+                        ctx->display_username_at_boot = !ctx->display_username_at_boot;
+                        launcher_config_save(ctx);
+                        break;
+                    case 4: /* Reorder Apps */
                         reorder_init(ctx);
                         nav_push(ctx, SCREEN_REORDER);
                         break;
-                    case 2: nav_push(ctx, SCREEN_ABOUT); break;
+                    case 5: /* Default app: open chooser */
+                        app_chooser_open(ctx);
+                        break;
+                    case 6: nav_push(ctx, SCREEN_ABOUT); break;
+                }
+            } else if (key == SDLK_SPACE) {
+                if (ctx->selected_item == 3) {
+                    ctx->display_username_at_boot = !ctx->display_username_at_boot;
+                    launcher_config_save(ctx);
+                } else if (ctx->selected_item == 5) {
+                    ctx->launch_default_app = !ctx->launch_default_app;
+                    launcher_config_save(ctx);
                 }
             } else if (key == SDLK_ESCAPE) {
                 nav_pop(ctx);
@@ -1410,6 +1873,10 @@ static void handle_key_event(app_context *ctx, SDL_Event *event) {
                     if (ctx->selected_item < ctx->scroll_offset) {
                         ctx->scroll_offset = ctx->selected_item;
                     }
+                } else {
+                    ctx->selected_item = ctx->network_count - 1;
+                    ctx->scroll_offset = (ctx->network_count > ctx->items_per_page)
+                                         ? ctx->network_count - ctx->items_per_page : 0;
                 }
             } else if (key == SDLK_DOWN) {
                 if (ctx->selected_item < ctx->network_count - 1) {
@@ -1417,6 +1884,9 @@ static void handle_key_event(app_context *ctx, SDL_Event *event) {
                     if (ctx->selected_item >= ctx->scroll_offset + ctx->items_per_page) {
                         ctx->scroll_offset = ctx->selected_item - ctx->items_per_page + 1;
                     }
+                } else {
+                    ctx->selected_item = 0;
+                    ctx->scroll_offset = 0;
                 }
             } else if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
                 ctx->selected_network = ctx->selected_item;
@@ -1430,6 +1900,8 @@ static void handle_key_event(app_context *ctx, SDL_Event *event) {
                 }
             } else if (key == SDLK_S) {
                 ctx->network_count = 0;
+                ctx->scanning      = true;
+                wifi_scan_start();
             } else if (key == SDLK_ESCAPE) {
                 nav_pop(ctx);
             }
@@ -1457,7 +1929,13 @@ static void render_screen(app_context *ctx) {
     memset(ctx->pixels, 0, SCREEN_WIDTH * SCREEN_HEIGHT * sizeof(uint16_t));
 
     switch (ctx->current_screen) {
-        case SCREEN_MAIN: draw_main_settings(ctx); break;
+        case SCREEN_MAIN:
+            draw_main_settings(ctx);
+            if (ctx->show_app_chooser)
+                draw_app_chooser_dialog(ctx);
+            if (ctx->show_text_input_dialog)
+                draw_text_input_dialog(ctx);
+            break;
         case SCREEN_WIFI:
             draw_wifi_settings(ctx);
             if (ctx->show_password_dialog) {
@@ -1534,6 +2012,7 @@ int main(int argc, char *argv[]) {
     ctx.selected_item  = 0;
     ctx.scroll_offset  = 0;
     ctx.nav_depth      = 0;
+    launcher_config_load(&ctx);
 
     SDL_StartTextInput(ctx.window);
 
@@ -1546,7 +2025,7 @@ int main(int argc, char *argv[]) {
                 case SDL_EVENT_QUIT: running = false; break;
                 case SDL_EVENT_KEY_DOWN: handle_key_event(&ctx, &event); break;
                 case SDL_EVENT_TEXT_INPUT:
-                    if (ctx.show_password_dialog) {
+                    if (ctx.show_password_dialog || ctx.show_text_input_dialog) {
                         handle_key_event(&ctx, &event);
                     } else if (ctx.current_screen == SCREEN_REORDER &&
                                ctx.reorder_dialog_type != DIALOG_NONE &&
@@ -1565,6 +2044,7 @@ int main(int argc, char *argv[]) {
     SDL_StopTextInput(ctx.window);
     free(ctx.pixels);
     free(ctx.networks);
+    free(ctx.chooser_apps);
     SDL_DestroyTexture(ctx.texture);
     SDL_DestroyRenderer(ctx.renderer);
     SDL_DestroyWindow(ctx.window);

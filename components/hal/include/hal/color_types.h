@@ -57,6 +57,10 @@ typedef enum {
 typedef enum {
     COLOR_PIXEL_YUV444,    ///< 24 bits, 8 bits per Y/U/V value
     COLOR_PIXEL_YUV422,    ///< 16 bits, 8-bit Y per pixel, 8-bit U and V per two pixels
+    COLOR_PIXEL_UYVY422,  ///< 16 bits, 8-bit Y per pixel, 8-bit U and V per two pixels w/ U0-Y0-V0-Y1 pack order
+    COLOR_PIXEL_VYUY422,  ///< 16 bits, 8-bit Y per pixel, 8-bit U and V per two pixels w/ V0-Y0-U0-Y1 pack order
+    COLOR_PIXEL_YUYV422,  ///< 16 bits, 8-bit Y per pixel, 8-bit U and V per two pixels w/ Y0-U0-Y1-V0 pack order
+    COLOR_PIXEL_YVYU422,  ///< 16 bits, 8-bit Y per pixel, 8-bit U and V per two pixels w/ Y0-V0-Y1-U0 pack order
     COLOR_PIXEL_YUV420,    ///< 12 bits, 8-bit Y per pixel, 8-bit U and V per four pixels
     COLOR_PIXEL_YUV411,    ///< 12 bits, 8-bit Y per pixel, 8-bit U and V per four pixels
 } color_pixel_yuv_format_t;
@@ -220,6 +224,15 @@ typedef enum {
     COLOR_YUV422_PACK_ORDER_UYVY, /*!< UYVY */
     COLOR_YUV422_PACK_ORDER_VYUY, /*!< VYUY */
 } color_yuv422_pack_order_t;
+
+/**
+ * @brief YUV macroblock data (one macroblock: 2x2 for YUV420, 2x1 for YUV422, 1x1 for YUV444)
+ */
+typedef struct {
+    uint8_t y;      /*!< Y component [0, 255] */
+    uint8_t u;      /*!< U component [0, 255] */
+    uint8_t v;      /*!< V component [0, 255] */
+} color_macroblock_yuv_data_t;
 
 #ifdef __cplusplus
 }

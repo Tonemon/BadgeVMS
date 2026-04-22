@@ -53,7 +53,7 @@ esp_err_t io_mux_set_clock_source(soc_module_clk_t clk_src)
 
 void io_mux_enable_lp_io_clock(gpio_num_t gpio_num, bool enable)
 {
-    assert((gpio_num != GPIO_NUM_NC) && (gpio_num <= MAX_RTC_GPIO_NUM) && "RTCIO number error");
+    assert((gpio_num != GPIO_NUM_NC) && (gpio_num <= SOC_RTCIO_PIN_COUNT - 1) && "RTCIO number error");
     portENTER_CRITICAL(&s_io_mux_spinlock);
     if (enable) {
         if (s_rtc_io_status.rtc_io_enabled_cnt[gpio_num] == 0) {
@@ -78,7 +78,7 @@ void io_mux_enable_lp_io_clock(gpio_num_t gpio_num, bool enable)
 
 void io_mux_force_disable_lp_io_clock(gpio_num_t gpio_num)
 {
-    assert((gpio_num != GPIO_NUM_NC) && (gpio_num <= MAX_RTC_GPIO_NUM) && "RTCIO number error");
+    assert((gpio_num != GPIO_NUM_NC) && (gpio_num <= SOC_RTCIO_PIN_COUNT - 1) && "RTCIO number error");
     portENTER_CRITICAL(&s_io_mux_spinlock);
     s_rtc_io_status.rtc_io_enabled_cnt[gpio_num] = 0;
     s_rtc_io_status.rtc_io_using_mask &= ~(1ULL << gpio_num);
@@ -88,4 +88,10 @@ void io_mux_force_disable_lp_io_clock(gpio_num_t gpio_num)
         }
     }
     portEXIT_CRITICAL(&s_io_mux_spinlock);
+}
+
+bool io_mux_is_lp_io_in_use(gpio_num_t gpio_num)
+{
+    assert((gpio_num != GPIO_NUM_NC) && (gpio_num <= SOC_RTCIO_PIN_COUNT - 1) && "RTCIO number error");
+    return s_rtc_io_status.rtc_io_enabled_cnt[gpio_num] > 0;
 }

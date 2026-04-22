@@ -91,7 +91,7 @@ static bool dma_trans_done_cb(dw_gdma_channel_handle_t chan, const dw_gdma_trans
     // clear the interrupt status
     uint32_t error_status = mipi_dsi_brg_ll_get_interrupt_status(hal->bridge);
     mipi_dsi_brg_ll_clear_interrupt_status(hal->bridge, error_status);
-    if (unlikely(error_status & MIPI_DSI_LL_EVENT_UNDERRUN)) {
+    if (unlikely(error_status & MIPI_DSI_BRG_LL_EVENT_UNDERRUN)) {
         // when an underrun happens, the LCD display may already becomes blue
         // it's too late to recover the display, so we just print an error message
         // as a hint to the user that he should optimize the memory bandwidth (with AXI-ICM)
@@ -219,21 +219,14 @@ esp_err_t esp_lcd_new_panel_dpi(esp_lcd_dsi_bus_handle_t bus, const esp_lcd_dpi_
     dpi_panel->bus = bus;
     dpi_panel->num_fbs = num_fbs;
 
-    // allocate frame buffer from PSRAM
-    uint32_t cache_line_size = cache_hal_get_cache_line_size(CACHE_LL_LEVEL_EXT_MEM, CACHE_TYPE_DATA);
-    // DMA doesn't have requirement on the buffer alignment, but the cache does
-    uint32_t alignment = cache_line_size;
+    // allocate frame buffer from PSRAM via compositor's managed allocator
     size_t fb_size = panel_config->video_timing.h_size * panel_config->video_timing.v_size * bits_per_pixel / 8;
+    pixel_format_t bvms_fmt = (bits_per_pixel > 16) ? BADGEVMS_PIXELFORMAT_RGBA8888 : BADGEVMS_PIXELFORMAT_RGB565;
     framebuffer_t *frame_buffer = NULL;
     for (int i = 0; i < num_fbs; i++) {
-        frame_buffer = framebuffer_allocate(720, 720);
+        frame_buffer = framebuffer_allocate(720, 720, bvms_fmt);
         ESP_GOTO_ON_FALSE(frame_buffer, ESP_ERR_NO_MEM, err, TAG, "no memory for frame buffer");
         dpi_panel->fbs[i] = (void*)frame_buffer->pixels;
-        ESP_LOGD(TAG, "fb[%d] @%p", i, frame_buffer->pixels);
-        // preset the frame buffer with black color
-        // the frame buffer address alignment is ensured by `heap_caps_aligned_calloc`
-        // while the value of the fb_size may not be aligned to the cache line size
-        // but that's not a problem because the `heap_caps_aligned_calloc` internally allocated a buffer whose size is aligned up to the cache line size
         ESP_GOTO_ON_ERROR(esp_cache_msync(frame_buffer->pixels, fb_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED),
                           err, TAG, "cache write back failed");
     }
@@ -324,7 +317,7 @@ esp_err_t esp_lcd_new_panel_dpi(esp_lcd_dsi_bus_handle_t bus, const esp_lcd_dpi_
     mipi_dsi_brg_ll_set_num_pixel_bits(hal->bridge, panel_config->video_timing.h_size * panel_config->video_timing.v_size * bits_per_pixel);
     mipi_dsi_brg_ll_set_underrun_discard_count(hal->bridge, panel_config->video_timing.h_size);
     // set input color space
-    mipi_dsi_brg_ll_set_input_color_space(hal->bridge, COLOR_SPACE_TYPE(in_color_format));
+    mipi_dsi_brg_ll_set_input_color_range(hal->bridge, COLOR_SPACE_TYPE(in_color_format));
     // use the DW_GDMA as the flow controller
     mipi_dsi_brg_ll_set_flow_controller(hal->bridge, MIPI_DSI_LL_FLOW_CONTROLLER_DMA);
     mipi_dsi_brg_ll_set_multi_block_number(hal->bridge, DPI_PANEL_MIN_DMA_NODES_PER_LINK);
@@ -460,7 +453,7 @@ static esp_err_t dpi_panel_init(esp_lcd_panel_t *panel)
 
     // enable the underrun interrupt, we use this as a signal of bandwidth shortage
     // note, we opt to not install a dedicated interrupt handler just for this error condition, instead, we check it in the DMA callback
-    mipi_dsi_brg_ll_enable_interrupt(hal->bridge, MIPI_DSI_LL_EVENT_UNDERRUN, true);
+    mipi_dsi_brg_ll_enable_interrupt(hal->bridge, MIPI_DSI_BRG_LL_EVENT_UNDERRUN, true);
 
     return ESP_OK;
 }

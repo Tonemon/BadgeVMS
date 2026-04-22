@@ -35,12 +35,20 @@ typedef enum {
 } esp_key_mgr_xts_aes_key_len_t;
 
 /**
- * @brief Type of the key: ECDSA, XTS
+ * @brief Type of the key: ECDSA, XTS, etc.
  */
 typedef enum {
-    ESP_KEY_MGR_ECDSA_KEY = 0,          /* ECDSA key */
-    ESP_KEY_MGR_XTS_AES_128_KEY,        /* XTS-AES 128 key */
-    ESP_KEY_MGR_XTS_AES_256_KEY,        /* XTS-AES 256 key */
+    ESP_KEY_MGR_XTS_AES_128_KEY = 0,   /* XTS-AES 128-bit key */
+    ESP_KEY_MGR_XTS_AES_256_KEY,        /* XTS-AES 256-bit key */
+    ESP_KEY_MGR_ECDSA_192_KEY,          /* ECDSA 192-bit key */
+    ESP_KEY_MGR_ECDSA_256_KEY,          /* ECDSA 256-bit key */
+    ESP_KEY_MGR_ECDSA_384_KEY,          /* ECDSA 384-bit key */
+    ESP_KEY_MGR_HMAC_KEY,               /* HMAC key */
+    ESP_KEY_MGR_DS_KEY,                 /* Digital signature key */
+    ESP_KEY_MGR_PSRAM_128_KEY,          /* PSRAM 128-bit key */
+    ESP_KEY_MGR_PSRAM_256_KEY,          /* PSRAM 256-bit key */
+    /* Backward-compat alias */
+    ESP_KEY_MGR_ECDSA_KEY = ESP_KEY_MGR_ECDSA_192_KEY,
 } esp_key_mgr_key_type_t;
 
 /*
@@ -56,10 +64,23 @@ typedef enum {
  * @brief Key Purpose to be set for a particular key in the Key Manager
  */
 typedef enum {
-    ESP_KEY_MGR_KEY_PURPOSE_ECDSA = 1,
-    ESP_KEY_MGR_KEY_PURPOSE_XTS_AES_256_1 = 2, /* First half of the XTS AES 256 bit key */
-    ESP_KEY_MGR_KEY_PURPOSE_XTS_AES_256_2 = 3, /* Second half of the XTS AES 256 bit key */
-    ESP_KEY_MGR_KEY_PURPOSE_XTS_AES_128 = 4,    /* XTS AES 128 bit key */
+    ESP_KEY_MGR_KEY_PURPOSE_ECDSA_192 = 1,      /* ECDSA 192-bit key */
+    ESP_KEY_MGR_KEY_PURPOSE_ECDSA_256 = 2,      /* ECDSA 256-bit key */
+    ESP_KEY_MGR_KEY_PURPOSE_FLASH_256_1 = 3,    /* First half of flash 256-bit key */
+    ESP_KEY_MGR_KEY_PURPOSE_XTS_AES_256_1 = ESP_KEY_MGR_KEY_PURPOSE_FLASH_256_1,
+    ESP_KEY_MGR_KEY_PURPOSE_FLASH_256_2 = 4,    /* Second half of flash 256-bit key */
+    ESP_KEY_MGR_KEY_PURPOSE_XTS_AES_256_2 = ESP_KEY_MGR_KEY_PURPOSE_FLASH_256_2,
+    ESP_KEY_MGR_KEY_PURPOSE_FLASH_128 = 5,      /* Flash 128-bit key */
+    ESP_KEY_MGR_KEY_PURPOSE_XTS_AES_128 = ESP_KEY_MGR_KEY_PURPOSE_FLASH_128,
+    ESP_KEY_MGR_KEY_PURPOSE_HMAC = 6,           /* HMAC key */
+    ESP_KEY_MGR_KEY_PURPOSE_DS = 7,             /* Digital signature key */
+    ESP_KEY_MGR_KEY_PURPOSE_PSRAM_256_1 = 8,    /* First half of PSRAM 256-bit key */
+    ESP_KEY_MGR_KEY_PURPOSE_PSRAM_256_2 = 9,    /* Second half of PSRAM 256-bit key */
+    ESP_KEY_MGR_KEY_PURPOSE_PSRAM_128 = 10,     /* PSRAM 128-bit key */
+    ESP_KEY_MGR_KEY_PURPOSE_ECDSA_384_L = 11,   /* Lower half of ECDSA 384-bit key */
+    ESP_KEY_MGR_KEY_PURPOSE_ECDSA_384_H = 12,   /* Higher half of ECDSA 384-bit key */
+    /* Backward-compat alias */
+    ESP_KEY_MGR_KEY_PURPOSE_ECDSA = ESP_KEY_MGR_KEY_PURPOSE_ECDSA_192,
 } esp_key_mgr_key_purpose_t;
 
 /**
