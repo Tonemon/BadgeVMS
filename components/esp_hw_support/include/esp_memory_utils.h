@@ -206,7 +206,7 @@ inline static void * esp_ptr_diram_iram_to_dram(const void *p) {
  */
 __attribute__((always_inline))
 inline static bool esp_ptr_in_tcm(const void *p) {
-    return ((intptr_t)p >= SOC_SPM_LOW && (intptr_t)p < SOC_SPM_HIGH);
+    return ((intptr_t)p >= SOC_TCM_LOW && (intptr_t)p < SOC_TCM_HIGH);
 }
 #endif  //#if SOC_MEM_TCM_SUPPORTED || SOC_MEM_SPM_SUPPORTED || SOC_MEM_SPM_SUPPORTED
 

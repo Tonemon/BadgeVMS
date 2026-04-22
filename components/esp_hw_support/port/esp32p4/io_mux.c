@@ -92,7 +92,6 @@ void io_mux_force_disable_lp_io_clock(gpio_num_t gpio_num)
 
 bool io_mux_is_lp_io_in_use(gpio_num_t gpio_num)
 {
-    uint32_t rtc_io_num = gpio_num - RTCIO_LL_GPIO_NUM_OFFSET;
-    assert(rtc_io_num < SOC_RTCIO_PIN_COUNT);
-    return s_rtc_io_status.rtc_io_enabled_cnt[rtc_io_num] > 0;
+    assert((gpio_num != GPIO_NUM_NC) && (gpio_num <= SOC_RTCIO_PIN_COUNT - 1) && "RTCIO number error");
+    return s_rtc_io_status.rtc_io_enabled_cnt[gpio_num] > 0;
 }

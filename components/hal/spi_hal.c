@@ -31,7 +31,7 @@ void spi_hal_set_data_pin_idle_level(spi_hal_context_t *hal, bool level)
 {
 #if SPI_LL_MOSI_FREE_LEVEL
     // Config default output data line level when don't have transaction
-    spi_ll_set_data_pin_idle_level(hal->hw, level);
+    spi_ll_set_mosi_free_level(hal->hw, level);
     spi_ll_apply_config(hal->hw);
 #endif
 }
