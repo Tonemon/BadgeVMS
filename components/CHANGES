@@ -14,6 +14,9 @@
 
 * esp_driver_ppa (From esp-idf v5.5)
   - Make ppa dma2d callback IRAM safe
+  - Rev 1.x (CONFIG_ESP32P4_SELECTS_REV_LESS_V3): PPA hardware non-functional on
+    prototype silicon; PPA client registration skipped; compositor uses software_blit()
+    fallback (nearest-neighbour rotate/scale in CPU) instead of ppa_do_scale_rotate_mirror
 
 * esp_lcd (From esp-idf v5.5)
   - Use BadgeVMS framebuffer allocator instead of heap_caps_*
@@ -26,6 +29,10 @@
 
 * esp_hw_support (From esp-idf v5.5)
   - Add an option to slightly increase PSRAM voltage
+  - Rev 1.x support: Kconfig.hw_support updated to expose ESP32P4_REV_MIN_100 and
+    ESP32P4_SELECTS_REV_LESS_V3; PMU, RTC, and clock-tree files synced from upstream
+    IDF for rev 1.x register layouts (pmu_init.c, pmu_param.c, pmu_sleep.c,
+    rtc_clk.c, rtc_clk_init.c, esp_clk_tree.c)
 
 * esp_tca8418
   - Force version 1.2 of espressif:i2c_bus
