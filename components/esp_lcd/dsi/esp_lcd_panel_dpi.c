@@ -219,14 +219,12 @@ esp_err_t esp_lcd_new_panel_dpi(esp_lcd_dsi_bus_handle_t bus, const esp_lcd_dpi_
     dpi_panel->bus = bus;
     dpi_panel->num_fbs = num_fbs;
 
-    // allocate frame buffer from PSRAM
-    uint32_t cache_line_size = cache_hal_get_cache_line_size(CACHE_LL_LEVEL_EXT_MEM, CACHE_TYPE_DATA);
-    // DMA doesn't have requirement on the buffer alignment, but the cache does
-    uint32_t alignment = cache_line_size;
+    // allocate frame buffer from PSRAM via compositor's managed allocator
     size_t fb_size = panel_config->video_timing.h_size * panel_config->video_timing.v_size * bits_per_pixel / 8;
+    pixel_format_t bvms_fmt = (bits_per_pixel > 16) ? BADGEVMS_PIXELFORMAT_RGBA8888 : BADGEVMS_PIXELFORMAT_RGB565;
     framebuffer_t *frame_buffer = NULL;
     for (int i = 0; i < num_fbs; i++) {
-        frame_buffer = framebuffer_allocate(720, 720);
+        frame_buffer = framebuffer_allocate(720, 720, bvms_fmt);
         ESP_GOTO_ON_FALSE(frame_buffer, ESP_ERR_NO_MEM, err, TAG, "no memory for frame buffer");
         dpi_panel->fbs[i] = (void*)frame_buffer->pixels;
         ESP_LOGD(TAG, "fb[%d] @%p", i, frame_buffer->pixels);
