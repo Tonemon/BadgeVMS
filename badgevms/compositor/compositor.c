@@ -721,7 +721,7 @@ static void IRAM_ATTR NOINLINE_ATTR compositor(void *ignored) {
 
         bool framebuffer_cleared = false;
         if (background_damaged & (1 << cur_fb)) {
-            memset(framebuffers[cur_fb], 0xaa, FRAMEBUFFER_BYTES);
+            memset(framebuffers[cur_fb], 0x00, FRAMEBUFFER_BYTES);
             // Make sure the ppa will see our new background
             esp_cache_msync(
                 framebuffers[cur_fb],
@@ -737,6 +737,14 @@ static void IRAM_ATTR NOINLINE_ATTR compositor(void *ignored) {
             window_t *window = window_stack->prev; // Start with back window
 
             do {
+                // When a non-fullscreen window is in focus, skip background windows entirely.
+                // Their content would bleed into the uncovered screen area behind the focused
+                // window, which appears as colored garbage around the window border.
+                if (window != window_stack && !(window_stack->flags & WINDOW_FLAG_FULLSCREEN)) {
+                    window = window->prev;
+                    continue;
+                }
+
                 task_info_t *task_info = (task_info_t *)atomic_load(&window->task_info);
                 if (!task_info) {
                     remove_window(window);
@@ -877,12 +885,13 @@ static void IRAM_ATTR NOINLINE_ATTR compositor(void *ignored) {
                 }
 
                 if (need_decoration_draw && !(window->flags & WINDOW_FLAG_FULLSCREEN)) {
-                    // Cache sync before drawing decorations
+#if !CONFIG_ESP32P4_SELECTS_REV_LESS_V3
+                    // PPA writes directly to PSRAM; reload into CPU cache before CPU-side decoration draw
                     esp_cache_msync(framebuffers[cur_fb], FRAMEBUFFER_BYTES, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
-
+#endif
                     draw_window_box(framebuffers[cur_fb], window, window == window_stack);
 
-                    // Cache sync after drawing decorations
+                    // Flush decoration writes from CPU cache to PSRAM
                     esp_cache_msync(
                         framebuffers[cur_fb],
                         FRAMEBUFFER_BYTES,
@@ -1270,7 +1279,7 @@ bool compositor_init(char const *lcd_device_name, char const *keyboard_device_na
 
     for (int i = 0; i < DISPLAY_FRAMEBUFFERS; ++i) {
         lcd_device->_getfb(lcd_device, i, (void *)&framebuffers[i]);
-        memset(framebuffers[i], 0xaa, FRAMEBUFFER_BYTES);
+        memset(framebuffers[i], 0x00, FRAMEBUFFER_BYTES);
         esp_cache_msync(framebuffers[i], FRAMEBUFFER_BYTES, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
         ESP_LOGW(TAG, "Got framebuffer[%i]: %p", i, framebuffers[i]);
     }

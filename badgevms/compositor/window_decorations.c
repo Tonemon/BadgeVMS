@@ -69,7 +69,7 @@ IRAM_ATTR void draw_window_box(uint16_t *fb, window_t *window, bool foreground) 
     // Draw title bar background
     if (foreground) {
         // Foreground window: black title bar
-        draw_filled_rect_rotated(fb, x + 1, y + 1, total_width, BORDER_TOP_PX, window_colors.fg_titlebar_background);
+        draw_filled_rect_rotated(fb, x + 1, y + 1, total_width - 2, BORDER_TOP_PX, window_colors.fg_titlebar_background);
 
         // Top-left corner - simple L-shaped accent
         draw_filled_rect_rotated(fb, x + 3, y + 3, 3, 1, window_colors.fg_titlebar_corner_accents);
