@@ -257,20 +257,20 @@ static void draw_app_subtitle(Launcher_Context *ctx, int x, int y,
 
 /* 12×12 bitmaps: bit 11 = leftmost column (col 0), bit 0 = rightmost (col 11) */
 
-/* W shape derived from the built-in 12×24 font, compressed to 9 active rows */
+/* App window: full border, title bar (row 1 has close-button gap), separator, 3×3 dot grid */
 static const uint16_t ICON_DEFAULT_APP[ICON_ART] = {
-    0x606,  /*  ##      ##  */
-    0x606,  /*  ##      ##  */
-    0x606,  /*  ##      ##  */
-    0x666,  /*  ##  ##  ##  */
-    0x666,  /*  ##  ##  ##  */
-    0x6F6,  /*  ## ##### ## */
-    0x7FE,  /*  ########### */
-    0x79E,  /*  ####  ####  */
-    0x70E,  /*  ###    ###  */
-    0x606,  /*  ##      ##  */
-    0x000,
-    0x000,
+    0xFFF,  /* ############ (top border)       */
+    0xFFD,  /* ##########.# (title bar)        */
+    0xFFF,  /* ############ (title separator)  */
+    0x801,  /* #          # (body)             */
+    0xA49,  /* # #  #  # # (dot row 1)         */
+    0x801,  /* #          #                    */
+    0xA49,  /* # #  #  # # (dot row 2)         */
+    0x801,  /* #          #                    */
+    0xA49,  /* # #  #  # # (dot row 3)         */
+    0x801,  /* #          #                    */
+    0x801,  /* #          #                    */
+    0xFFF,  /* ############ (bottom border)    */
 };
 
 /* Classic folder shape with three decreasing content lines */
