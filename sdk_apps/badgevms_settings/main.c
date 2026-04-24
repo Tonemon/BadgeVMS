@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include <badgevms/compositor.h>
 #include <badgevms/wifi.h>
 #include <badgevms/application.h>
 #include <SDL3/SDL.h>
@@ -137,6 +138,7 @@ typedef struct {
     char hostname[128];
     char badge_owner_name[64];
     bool display_username_at_boot;
+    bool autorotate;
 
     /* Generic text input dialog */
     bool  show_text_input_dialog;
@@ -826,6 +828,7 @@ static void launcher_config_load(app_context *ctx) {
     strncpy(ctx->hostname,        "why2025badge", sizeof(ctx->hostname) - 1);
     strncpy(ctx->badge_owner_name, "John",            sizeof(ctx->badge_owner_name) - 1);
     ctx->display_username_at_boot = false;
+    ctx->autorotate               = true;
 
     FILE *f = fopen("APPS:[badgevms_launcher]config.json", "r");
     if (!f) return;
@@ -848,6 +851,7 @@ static void launcher_config_load(app_context *ctx) {
     cJSON *hn   = cJSON_GetObjectItem(cfg, "hostname");
     cJSON *bon  = cJSON_GetObjectItem(cfg, "badge_owner_name");
     cJSON *dub  = cJSON_GetObjectItem(cfg, "display_username_at_boot");
+    cJSON *ar   = cJSON_GetObjectItem(cfg, "autorotate");
     if (cJSON_IsBool(lda))
         ctx->launch_default_app = cJSON_IsTrue(lda);
     if (cJSON_IsString(da) && da->valuestring)
@@ -859,6 +863,8 @@ static void launcher_config_load(app_context *ctx) {
         strncpy(ctx->badge_owner_name, bon->valuestring, sizeof(ctx->badge_owner_name) - 1);
     if (cJSON_IsBool(dub))
         ctx->display_username_at_boot = cJSON_IsTrue(dub);
+    if (cJSON_IsBool(ar))
+        ctx->autorotate = cJSON_IsTrue(ar);
     cJSON_Delete(cfg);
 
     /* Resolve display name by walking the installed app list.
@@ -895,6 +901,7 @@ static void launcher_config_save(app_context *ctx) {
     cJSON_AddStringToObject(cfg, "hostname",                 ctx->hostname);
     cJSON_AddStringToObject(cfg, "badge_owner_name",         ctx->badge_owner_name);
     cJSON_AddBoolToObject(cfg,   "display_username_at_boot", ctx->display_username_at_boot);
+    cJSON_AddBoolToObject(cfg,   "autorotate",               ctx->autorotate);
     char *json_str = cJSON_Print(cfg);
     cJSON_Delete(cfg);
     if (!json_str) return;
@@ -1023,6 +1030,7 @@ static void draw_main_settings(app_context *ctx) {
         "Badge owner name",
         "Hostname",
         "Display username at boot",
+        "Autorotate",
         "Reorder Apps",
         "Default app",
         "About"
@@ -1032,15 +1040,16 @@ static void draw_main_settings(app_context *ctx) {
         "Your name displayed at boot and in apps",
         "Network hostname of this badge",
         "Show your name during the boot sequence",
+        "Flip display when badge is held upside down",
         "Organise launcher home screen and folders",
         "The application launched at boot",
         "Badge specifications"
     };
-    ctx->total_items = 7;
+    ctx->total_items = 8;
 
     int list_y      = window_y + title_h + 20;
     int list_h      = window_h - title_h - 80;
-    int item_height = 70;
+    int item_height = 65;
 
     draw_rect(ctx, window_x + 15, list_y, window_w - 30, list_h, 0xFFFFFF);
     draw_3d_border(ctx, window_x + 15, list_y, window_w - 30, list_h, 1);
@@ -1087,7 +1096,15 @@ static void draw_main_settings(app_context *ctx) {
                 ? CDE_SELECTED_TEXT
                 : (ctx->display_username_at_boot ? CDE_SUCCESS_COLOR : CDE_INACTIVE_TEXT);
             draw_text_bold(ctx, toggle_x, item_y + 12, toggle_str, toggle_color);
-        } else if (i == 5) { /* Default app: inline [ON]/[OFF] + right-aligned app name */
+        } else if (i == 4) { /* Autorotate: inline [ON]/[OFF] */
+            int title_w    = get_text_width(categories[i]);
+            int toggle_x   = text_x + title_w + 2 * FONT_WIDTH;
+            const char *toggle_str = ctx->autorotate ? "[ON]" : "[OFF]";
+            uint32_t toggle_color = (i == ctx->selected_item)
+                ? CDE_SELECTED_TEXT
+                : (ctx->autorotate ? CDE_SUCCESS_COLOR : CDE_INACTIVE_TEXT);
+            draw_text_bold(ctx, toggle_x, item_y + 12, toggle_str, toggle_color);
+        } else if (i == 6) { /* Default app: inline [ON]/[OFF] + right-aligned app name */
             int title_w    = get_text_width(categories[i]);
             int toggle_x   = text_x + title_w + 2 * FONT_WIDTH;
             const char *toggle_str = ctx->launch_default_app ? "[ON]" : "[OFF]";
@@ -1109,9 +1126,9 @@ static void draw_main_settings(app_context *ctx) {
 
     /* Dynamic footer hint */
     const char *footer_hint;
-    if (ctx->selected_item == 3)
+    if (ctx->selected_item == 3 || ctx->selected_item == 4)
         footer_hint = "UP/DOWN: Navigate  ENTER/SPACE: Toggle  ESC: Exit";
-    else if (ctx->selected_item == 5)
+    else if (ctx->selected_item == 6)
         footer_hint = "UP/DOWN: Navigate  ENTER: Choose  SPACE: Toggle  ESC: Exit";
     else
         footer_hint = "UP/DOWN: Navigate  ENTER: Select  ESC: Exit";
@@ -1844,20 +1861,29 @@ static void handle_key_event(app_context *ctx, SDL_Event *event) {
                         ctx->display_username_at_boot = !ctx->display_username_at_boot;
                         launcher_config_save(ctx);
                         break;
-                    case 4: /* Reorder Apps */
+                    case 4: /* Autorotate: toggle */
+                        ctx->autorotate = !ctx->autorotate;
+                        compositor_set_autorotate(ctx->autorotate);
+                        launcher_config_save(ctx);
+                        break;
+                    case 5: /* Reorder Apps */
                         reorder_init(ctx);
                         nav_push(ctx, SCREEN_REORDER);
                         break;
-                    case 5: /* Default app: open chooser */
+                    case 6: /* Default app: open chooser */
                         app_chooser_open(ctx);
                         break;
-                    case 6: nav_push(ctx, SCREEN_ABOUT); break;
+                    case 7: nav_push(ctx, SCREEN_ABOUT); break;
                 }
             } else if (key == SDLK_SPACE) {
                 if (ctx->selected_item == 3) {
                     ctx->display_username_at_boot = !ctx->display_username_at_boot;
                     launcher_config_save(ctx);
-                } else if (ctx->selected_item == 5) {
+                } else if (ctx->selected_item == 4) {
+                    ctx->autorotate = !ctx->autorotate;
+                    compositor_set_autorotate(ctx->autorotate);
+                    launcher_config_save(ctx);
+                } else if (ctx->selected_item == 6) {
                     ctx->launch_default_app = !ctx->launch_default_app;
                     launcher_config_save(ctx);
                 }
