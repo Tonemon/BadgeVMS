@@ -1310,9 +1310,9 @@ bool compositor_init(char const *lcd_device_name, char const *keyboard_device_na
     autorotate_enabled = true;
     FILE *cfg_f = why_fopen("APPS:[badgevms_launcher]config.json", "r");
     if (cfg_f) {
-        fseek(cfg_f, 0, SEEK_END);
-        long cfg_sz = ftell(cfg_f);
-        rewind(cfg_f);
+        why_fseek(cfg_f, 0, SEEK_END);
+        long cfg_sz = why_ftell(cfg_f);
+        why_rewind(cfg_f);
         if (cfg_sz > 0 && cfg_sz < 4096) {
             char *cfg_buf = why_malloc((size_t)cfg_sz + 1);
             if (cfg_buf) {
@@ -1357,9 +1357,9 @@ void compositor_set_autorotate(bool enabled) {
     if (!cfg_f)
         return;
 
-    fseek(cfg_f, 0, SEEK_END);
-    long cfg_sz = ftell(cfg_f);
-    rewind(cfg_f);
+    why_fseek(cfg_f, 0, SEEK_END);
+    long cfg_sz = why_ftell(cfg_f);
+    why_rewind(cfg_f);
 
     if (cfg_sz <= 0 || cfg_sz >= 4096) {
         why_fclose(cfg_f);
