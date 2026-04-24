@@ -4,5 +4,5 @@
   "hostname": "why2025badge",
   "badge_owner_name": "John",
   "display_username_at_boot": false,
-  "autorotate": true
+  "autorotate": false
 }
