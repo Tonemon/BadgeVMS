@@ -127,6 +127,9 @@ typedef struct {
     int              saved_home_scroll;
     /* Parsed apps.json kept alive for folder lookups */
     cJSON           *apps_json;
+    /* Icon cache: one entry per ctx->applications[], indexed by position */
+    uint16_t       **app_icons;       /* NULL = no icon found */
+    bool            *app_icons_tried; /* true = load already attempted */
 } Launcher_Context;
 
 static inline uint16_t rgb888_to_rgb565_color(uint32_t rgb888) {
@@ -246,6 +249,123 @@ static void draw_app_subtitle(Launcher_Context *ctx, int x, int y,
     draw_text(ctx, x, y, sub, color);
 }
 
+/* ---- Icon rendering ---- */
+
+#define ICON_INNER  44  /* usable pixels inside the 48×48 box after the 2px border */
+#define ICON_ART    12  /* pixel-art grid size */
+#define ICON_SCALE   3  /* renders 12×12 art → 36×36 px; centred in ICON_INNER with 4px margin */
+
+/* 12×12 bitmaps: bit 11 = leftmost column (col 0), bit 0 = rightmost (col 11) */
+
+/* W shape derived from the built-in 12×24 font, compressed to 9 active rows */
+static const uint16_t ICON_DEFAULT_APP[ICON_ART] = {
+    0x606,  /*  ##      ##  */
+    0x606,  /*  ##      ##  */
+    0x606,  /*  ##      ##  */
+    0x666,  /*  ##  ##  ##  */
+    0x666,  /*  ##  ##  ##  */
+    0x6F6,  /*  ## ##### ## */
+    0x7FE,  /*  ########### */
+    0x79E,  /*  ####  ####  */
+    0x70E,  /*  ###    ###  */
+    0x606,  /*  ##      ##  */
+    0x000,
+    0x000,
+};
+
+/* Classic folder shape with three decreasing content lines */
+static const uint16_t ICON_FOLDER[ICON_ART] = {
+    0xE00,  /* ###           (tab at top-left) */
+    0xFFF,  /* ############ */
+    0x801,  /* #          # */
+    0xBF9,  /* # ####### .# (long file line) */
+    0x801,  /* #          # */
+    0xBF1,  /* # ######  .# (medium) */
+    0x801,  /* #          # */
+    0xBC1,  /* # ####    .# (short) */
+    0x801,  /* #          # */
+    0x801,  /* #          # */
+    0x801,  /* #          # */
+    0xFFF,  /* ############ */
+};
+
+/* Render a 12×12 pixel-art bitmap at ICON_SCALE× inside an icon box.
+   x,y are the top-left of the 48×48 box. */
+static void draw_pixel_icon(Launcher_Context *ctx, int bx, int by,
+                             const uint16_t *bitmap, uint32_t color) {
+    int x0 = bx + 2 + (ICON_INNER - ICON_ART * ICON_SCALE) / 2;
+    int y0 = by + 2 + (ICON_INNER - ICON_ART * ICON_SCALE) / 2;
+    for (int row = 0; row < ICON_ART; row++) {
+        for (int col = 0; col < ICON_ART; col++) {
+            if (bitmap[row] & (0x800 >> col)) {
+                draw_rect(ctx, x0 + col * ICON_SCALE, y0 + row * ICON_SCALE,
+                          ICON_SCALE, ICON_SCALE, color);
+            }
+        }
+    }
+}
+
+/* Render a pre-scaled ICON_INNER×ICON_INNER RGB565 pixel buffer inside a box. */
+static void draw_scaled_icon(Launcher_Context *ctx, int bx, int by,
+                              const uint16_t *pixels) {
+    int x0 = bx + 2;
+    int y0 = by + 2;
+    for (int row = 0; row < ICON_INNER; row++) {
+        int py = y0 + row;
+        if (py < 0 || py >= SCREEN_HEIGHT) continue;
+        for (int col = 0; col < ICON_INNER; col++) {
+            int px = x0 + col;
+            if (px >= 0 && px < SCREEN_WIDTH)
+                ctx->pixels[py * SCREEN_WIDTH + px] = pixels[row * ICON_INNER + col];
+        }
+    }
+}
+
+/* Look up (and lazy-load) the PNG icon for an app.
+   Returns pre-scaled RGB565 pixels or NULL if the app has no icon. */
+static uint16_t *get_app_icon(Launcher_Context *ctx, const char *uid) {
+    if (!ctx->app_icons || !ctx->app_icons_tried) return NULL;
+
+    /* Find this app's index */
+    int idx = -1;
+    for (size_t i = 0; i < ctx->num_apps; i++) {
+        if (strcmp(ctx->applications[i]->unique_identifier, uid) == 0) {
+            idx = (int)i;
+            break;
+        }
+    }
+    if (idx < 0) return NULL;
+
+    if (ctx->app_icons_tried[idx])
+        return ctx->app_icons[idx];
+
+    ctx->app_icons_tried[idx] = true;
+
+    char path[128];
+    snprintf(path, sizeof(path), "APPS:[%s]icon.png", uid);
+    int w, h, ch;
+    unsigned char *data = stbi_load(path, &w, &h, &ch, 4);
+    if (!data) return NULL;
+
+    uint16_t bg = rgb888_to_rgb565_color(CDE_BUTTON_COLOR);
+    uint16_t *buf = malloc(ICON_INNER * ICON_INNER * sizeof(uint16_t));
+    if (buf) {
+        for (int y = 0; y < ICON_INNER; y++) {
+            for (int x = 0; x < ICON_INNER; x++) {
+                int sx = x * w / ICON_INNER;
+                int sy = y * h / ICON_INNER;
+                int i4 = (sy * w + sx) * 4;
+                uint8_t r = data[i4], g = data[i4+1], b = data[i4+2], a = data[i4+3];
+                buf[y * ICON_INNER + x] = (a < 128) ? bg
+                    : (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
+            }
+        }
+        ctx->app_icons[idx] = buf;
+    }
+    stbi_image_free(data);
+    return ctx->app_icons[idx];
+}
+
 static void draw_about_dialog(Launcher_Context *ctx) {
     int dialog_w = 450;
     int dialog_h = 350;
@@ -352,8 +472,7 @@ static void draw_launcher_window(Launcher_Context *ctx) {
         int icon_x    = item_x + 10;
         int icon_y    = item_y + (item_height - icon_size) / 2;
 
-        uint32_t icon_color = selected ? CDE_SELECTED_TEXT : CDE_BUTTON_COLOR;
-        draw_rect(ctx, icon_x, icon_y, icon_size, icon_size, icon_color);
+        draw_rect(ctx, icon_x, icon_y, icon_size, icon_size, CDE_BUTTON_COLOR);
         draw_3d_border(ctx, icon_x, icon_y, icon_size, icon_size, 1);
 
         int text_x = icon_x + icon_size + 15;
@@ -364,6 +483,11 @@ static void draw_launcher_window(Launcher_Context *ctx) {
             draw_text_bold(ctx, text_x, item_y + 10, app->name, text_color);
             draw_app_subtitle(ctx, text_x, item_y + 35, app,
                               selected ? CDE_SELECTED_TEXT : CDE_INACTIVE_TEXT);
+            uint16_t *icon_px = get_app_icon(ctx, app->unique_identifier);
+            if (icon_px)
+                draw_scaled_icon(ctx, icon_x, icon_y, icon_px);
+            else
+                draw_pixel_icon(ctx, icon_x, icon_y, ICON_DEFAULT_APP, 0x1060B0);
         } else {
             /* Home view: ITEM_APP or ITEM_FOLDER */
             launcher_item_t *item = &ctx->items[i];
@@ -371,9 +495,12 @@ static void draw_launcher_window(Launcher_Context *ctx) {
                 draw_text_bold(ctx, text_x, item_y + 10, item->app->name, text_color);
                 draw_app_subtitle(ctx, text_x, item_y + 35, item->app,
                                   selected ? CDE_SELECTED_TEXT : CDE_INACTIVE_TEXT);
+                uint16_t *icon_px = get_app_icon(ctx, item->app->unique_identifier);
+                if (icon_px)
+                    draw_scaled_icon(ctx, icon_x, icon_y, icon_px);
+                else
+                    draw_pixel_icon(ctx, icon_x, icon_y, ICON_DEFAULT_APP, 0x1060B0);
             } else {
-                /* Folder row: draw "[F]" inside icon box, show app count as subtitle */
-                draw_text_bold(ctx, icon_x + 14, icon_y + 16, "[F]", text_color);
                 draw_text_bold(ctx, text_x, item_y + 10, item->folder.name, text_color);
                 char sub[48];
                 snprintf(sub, sizeof(sub), "%d app%s",
@@ -381,6 +508,7 @@ static void draw_launcher_window(Launcher_Context *ctx) {
                          item->folder.app_count == 1 ? "" : "s");
                 draw_text(ctx, text_x, item_y + 35, sub,
                           selected ? CDE_SELECTED_TEXT : CDE_INACTIVE_TEXT);
+                draw_pixel_icon(ctx, icon_x, icon_y, ICON_FOLDER, 0xD09000);
             }
         }
 
@@ -760,6 +888,10 @@ static bool run_launcher(
     ctx.pixels      = framebuffer->pixels;
 
     build_item_list(&ctx);
+
+    ctx.app_icons       = calloc(num, sizeof(uint16_t *));
+    ctx.app_icons_tried = calloc(num, sizeof(bool));
+
     event_t e;
 
     while (!ctx.quit) {
@@ -784,6 +916,12 @@ static bool run_launcher(
     free(ctx.items);
     free(ctx.folder_apps);
     cJSON_Delete(ctx.apps_json);
+    if (ctx.app_icons) {
+        for (size_t i = 0; i < ctx.num_apps; i++)
+            free(ctx.app_icons[i]);
+        free(ctx.app_icons);
+    }
+    free(ctx.app_icons_tried);
 
     return true;
 }
