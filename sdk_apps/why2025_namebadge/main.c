@@ -771,7 +771,8 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    event_t event;
+    event_t  event;
+    uint32_t now;
     while (running) {
         event = window_event_poll(app->window, false, 0);
         switch (event.type) {
