@@ -80,3 +80,6 @@ void           window_present(window_handle_t window, bool block, window_rect_t 
 event_t window_event_poll(window_handle_t window, bool block, uint32_t timeout_msec);
 
 void get_screen_info(int *width, int *height, pixel_format_t *format, float *refresh_rate);
+
+void compositor_set_autorotate(bool enabled);
+bool compositor_get_autorotate(void);

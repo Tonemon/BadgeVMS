@@ -32,6 +32,8 @@
 #include "memory.h"
 #include "pixel_functions.h"
 #include "task.h"
+#include "thirdparty/cJSON.h"
+#include "why_io.h"
 #include "window_decorations.h"
 
 #include <stdatomic.h>
@@ -62,6 +64,10 @@ static uint16_t  *framebuffers[DISPLAY_FRAMEBUFFERS];
 static int  background_damaged    = 7;
 static int  decoration_damaged    = 7;
 static bool visible_regions_valid = false;
+
+static orientation_device_t *orientation_device     = NULL;
+static bool                  autorotate_enabled     = false;
+static TickType_t            last_orientation_ticks = 0;
 
 typedef enum {
     WINDOW_CREATE,
@@ -542,6 +548,27 @@ static void IRAM_ATTR NOINLINE_ATTR compositor(void *ignored) {
         bool changes   = false;
         int  processed = 0;
         ulTaskNotifyTakeIndexed(0, pdTRUE, portMAX_DELAY);
+
+        // Autorotate: poll orientation sensor every ~1 second, flip 180° as needed.
+        // Uses hysteresis: only leaves normal when ORIENTATION_180 is seen, and only
+        // returns to normal when ORIENTATION_0 is seen, to avoid flickering mid-tilt.
+        if (autorotate_enabled && orientation_device) {
+            TickType_t now = xTaskGetTickCount();
+            if ((now - last_orientation_ticks) >= pdMS_TO_TICKS(1000)) {
+                last_orientation_ticks    = now;
+                orientation_t orient      = orientation_device->_get_orientation(orientation_device);
+                rotation_angle_t new_rot  = rotation;
+                if (rotation == ROTATION_ANGLE_270 && orient == ORIENTATION_180) {
+                    new_rot = ROTATION_ANGLE_90;
+                } else if (rotation == ROTATION_ANGLE_90 && orient == ORIENTATION_0) {
+                    new_rot = ROTATION_ANGLE_270;
+                }
+                if (new_rot != rotation) {
+                    rotation = new_rot;
+                    mark_scene_damaged();
+                }
+            }
+        }
 
         if (frame_ready) {
             lcd_device->_draw(lcd_device, 0, 0, FRAMEBUFFER_MAX_W, FRAMEBUFFER_MAX_H, framebuffers[cur_fb]);
@@ -1277,6 +1304,34 @@ bool compositor_init(char const *lcd_device_name, char const *keyboard_device_na
         return false;
     }
 
+    orientation_device = (orientation_device_t *)device_get("ORIENTATION0");
+
+    // Read autorotate preference from config.json; default to enabled.
+    autorotate_enabled = true;
+    FILE *cfg_f = why_fopen("APPS:[badgevms_launcher]config.json", "r");
+    if (cfg_f) {
+        fseek(cfg_f, 0, SEEK_END);
+        long cfg_sz = ftell(cfg_f);
+        rewind(cfg_f);
+        if (cfg_sz > 0 && cfg_sz < 4096) {
+            char *cfg_buf = why_malloc((size_t)cfg_sz + 1);
+            if (cfg_buf) {
+                size_t n   = why_fread(cfg_buf, 1, (size_t)cfg_sz, cfg_f);
+                cfg_buf[n] = '\0';
+                cJSON *cfg = cJSON_Parse(cfg_buf);
+                why_free(cfg_buf);
+                if (cfg) {
+                    cJSON *ar = cJSON_GetObjectItem(cfg, "autorotate");
+                    if (cJSON_IsBool(ar)) {
+                        autorotate_enabled = cJSON_IsTrue(ar);
+                    }
+                    cJSON_Delete(cfg);
+                }
+            }
+        }
+        why_fclose(cfg_f);
+    }
+
     for (int i = 0; i < DISPLAY_FRAMEBUFFERS; ++i) {
         lcd_device->_getfb(lcd_device, i, (void *)&framebuffers[i]);
         memset(framebuffers[i], 0x00, FRAMEBUFFER_BYTES);
@@ -1292,4 +1347,56 @@ bool compositor_init(char const *lcd_device_name, char const *keyboard_device_na
     create_kernel_task(compositor, "Compositor", 8192, NULL, 20, &compositor_handle, 0);
 
     return true;
+}
+
+void compositor_set_autorotate(bool enabled) {
+    autorotate_enabled = enabled;
+
+    // Persist the new value back to config.json
+    FILE *cfg_f = why_fopen("APPS:[badgevms_launcher]config.json", "r");
+    if (!cfg_f)
+        return;
+
+    fseek(cfg_f, 0, SEEK_END);
+    long cfg_sz = ftell(cfg_f);
+    rewind(cfg_f);
+
+    if (cfg_sz <= 0 || cfg_sz >= 4096) {
+        why_fclose(cfg_f);
+        return;
+    }
+
+    char *cfg_buf = why_malloc((size_t)cfg_sz + 1);
+    if (!cfg_buf) {
+        why_fclose(cfg_f);
+        return;
+    }
+
+    size_t n   = why_fread(cfg_buf, 1, (size_t)cfg_sz, cfg_f);
+    cfg_buf[n] = '\0';
+    why_fclose(cfg_f);
+
+    cJSON *cfg = cJSON_Parse(cfg_buf);
+    why_free(cfg_buf);
+    if (!cfg)
+        return;
+
+    cJSON_DeleteItemFromObject(cfg, "autorotate");
+    cJSON_AddBoolToObject(cfg, "autorotate", enabled);
+
+    char *out = cJSON_Print(cfg);
+    cJSON_Delete(cfg);
+    if (!out)
+        return;
+
+    cfg_f = why_fopen("APPS:[badgevms_launcher]config.json", "w");
+    if (cfg_f) {
+        why_fwrite(out, 1, strlen(out), cfg_f);
+        why_fclose(cfg_f);
+    }
+    cJSON_free(out);
+}
+
+bool compositor_get_autorotate(void) {
+    return autorotate_enabled;
 }
