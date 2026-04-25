@@ -740,6 +740,71 @@ static void draw_boot_screen(
     draw_text_centered(ctx, 0, text_y, SCREEN_WIDTH, status, 0xAAAAAA);
 }
 
+/* ── Terminal-style boot animation ───────────────────────────────────────── */
+#define TERM_LINE_MS   120   /* ms between successive dmesg lines             */
+
+static const char * const TERM_DMESG[] = {
+    "[    0.000000] BadgeVMS/RTOS booting on ESP32-P4 rev.0",
+    "[    0.000218] CPU: RISC-V rv32imafc ISA @ 360 MHz",
+    "[    0.001847] Memory: 768 kB SRAM + 8192 kB PSRAM",
+    "[    0.003102] why_io: VFS layer initialised",
+    "[    0.004571] FATFS: mounted APPS: (7168 kB)",
+    "[    0.005812] compositor: framebuffer 720x720 RGB565 ready",
+    "[    0.007234] elf_loader: symbol table loaded (342 entries)",
+    "[    0.008901] app_registry: scanning installed apps",
+    "[    0.011402] app_registry: 12 applications found",
+    "[    0.012881] wifi: MAC de:ad:be:ef:ca:fe",
+    "[    0.013507] wifi: mode station",
+    /* line 11 = hostname, built dynamically at runtime */
+};
+#define TERM_DMESG_STATIC  11
+#define TERM_DMESG_TOTAL   12
+
+static const char * const TERM_ART[] = {
+    "  ___           _           _   ___  __  _______",
+    " | _ ) __ _ __| | __ _ ___| | | |  \\/  / ___|  ",
+    " | _ \\/ _`/ _`|/ _`/ -_) |_| | |\\/| \\__ \\  ",
+    " |___/\\__,_\\__,_|\\__, \\___||___/|_|  |_|___/  ",
+    "                  |___/                          ",
+};
+#define TERM_ART_LINES  (sizeof(TERM_ART) / sizeof(TERM_ART[0]))
+
+static void draw_terminal_boot_screen(
+    Launcher_Context *ctx,
+    uint32_t          elapsed_ms,
+    const char       *hostname
+) {
+    memset(ctx->pixels, 0, SCREEN_WIDTH * SCREEN_HEIGHT * sizeof(uint16_t));
+
+    char host_line[72];
+    snprintf(host_line, sizeof(host_line),
+             "[    0.014230] network: hostname %s",
+             (hostname && hostname[0]) ? hostname : "why2025badge");
+
+    const int x0 = 8;
+    const int lh = 26;   /* font 24 px + 2 px gap */
+    int       y  = 8;
+
+    int nvis = (int)(elapsed_ms / TERM_LINE_MS);
+    if (nvis > TERM_DMESG_TOTAL) nvis = TERM_DMESG_TOTAL;
+
+    for (int i = 0; i < nvis; i++) {
+        const char *line = (i < TERM_DMESG_STATIC) ? TERM_DMESG[i] : host_line;
+        draw_text(ctx, x0, y, line, 0x808080);
+        y += lh;
+    }
+
+    if (nvis >= TERM_DMESG_TOTAL) {
+        y += lh;  /* blank line */
+        for (size_t i = 0; i < TERM_ART_LINES; i++) {
+            draw_text(ctx, x0, y, TERM_ART[i], 0xBBBBBB);
+            y += lh;
+        }
+        y += lh;  /* blank line */
+        draw_text(ctx, x0, y, "WHY2025 Badge booting up...", 0xFFFFFF);
+    }
+}
+
 static void build_item_list(Launcher_Context *ctx) {
     application_t **apps     = ctx->applications;
     size_t          num_apps = ctx->num_apps;
@@ -972,9 +1037,11 @@ int main(int argc, char *argv[]) {
         scan_thread(NULL);
     }
 
-    /* 5. Read badge identity from config for boot screen (non-fatal) */
+    /* 5. Read badge identity and boot animation choice from config (non-fatal) */
     char boot_owner_name[64]  = {0};
+    char boot_hostname[128]   = "why2025badge";
     bool boot_display_name    = false;
+    int  boot_animation       = 0;   /* 0 = splash, 1 = terminal */
     {
         FILE *cfg_f = fopen("APPS:[badgevms_launcher]config.json", "r");
         if (cfg_f) {
@@ -991,11 +1058,18 @@ int main(int argc, char *argv[]) {
                     if (cfg) {
                         cJSON *dub = cJSON_GetObjectItem(cfg, "display_username_at_boot");
                         cJSON *bon = cJSON_GetObjectItem(cfg, "badge_owner_name");
+                        cJSON *hn  = cJSON_GetObjectItem(cfg, "hostname");
+                        cJSON *ba  = cJSON_GetObjectItem(cfg, "boot_animation");
                         if (cJSON_IsBool(dub) && cJSON_IsTrue(dub))
                             boot_display_name = true;
                         if (cJSON_IsString(bon) && bon->valuestring)
                             strncpy(boot_owner_name, bon->valuestring,
                                     sizeof(boot_owner_name) - 1);
+                        if (cJSON_IsString(hn) && hn->valuestring)
+                            strncpy(boot_hostname, hn->valuestring,
+                                    sizeof(boot_hostname) - 1);
+                        if (cJSON_IsNumber(ba))
+                            boot_animation = (int)cJSON_GetNumberValue(ba);
                         cJSON_Delete(cfg);
                     }
                 }
@@ -1020,8 +1094,12 @@ int main(int argc, char *argv[]) {
         float bright    = 0.875f + 0.125f * sinf(2.0f * (float)M_PI * elapsed_ms / 2000.0f);
         int   dot_count = (int)(elapsed_ms / 500) % 4;
 
-        draw_boot_screen(&boot_ctx, logo_data, logo_w, logo_h, logo_ch, bright, dot_count,
-                         boot_display_name ? boot_owner_name : NULL);
+        if (boot_animation == 1) {
+            draw_terminal_boot_screen(&boot_ctx, elapsed_ms, boot_hostname);
+        } else {
+            draw_boot_screen(&boot_ctx, logo_data, logo_w, logo_h, logo_ch, bright, dot_count,
+                             boot_display_name ? boot_owner_name : NULL);
+        }
         window_present(window, true, NULL, 0);
 
         if (atomic_load(&g_scan_done) && elapsed_ms >= 2000)
