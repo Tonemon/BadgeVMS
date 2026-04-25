@@ -149,7 +149,7 @@ static void handleKeyInput()
 
 void DG_Init()
 {
-  window = window_create("DOOM", (window_size_t){DOOMGENERIC_RESX, DOOMGENERIC_RESY}, WINDOW_FLAG_DOUBLE_BUFFERED | WINDOW_FLAG_FULLSCREEN);
+  window = window_create("DOOM", (window_size_t){DOOMGENERIC_RESX, DOOMGENERIC_RESY}, WINDOW_FLAG_DOUBLE_BUFFERED);
   // Let BadgeVMS do hardware scaling for us
   framebuffer = window_framebuffer_create(window, (window_size_t){SCREENWIDTH, SCREENHEIGHT}, BADGEVMS_PIXELFORMAT_BGR565);
 
