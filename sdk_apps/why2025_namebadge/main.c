@@ -2,13 +2,11 @@
 #include <stdlib.h>
 
 #include <badgevms/compositor.h>
-#include <badgevms/device.h>
 #include <badgevms/event.h>
 #include <ctype.h>
 #include <math.h>
 #include <string.h>
 #include <time.h>
-#include <unistd.h>
 
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"
@@ -127,30 +125,7 @@ typedef struct {
     color_t               cursor_color;
     bool                  needs_full_redraw;
     bool                  has_been_edited;
-    orientation_device_t *orientation_device;
-    bool                  is_flipped;
-    uint32_t              last_flip_check;
 } state_t;
-
-bool get_orientation(state_t *app) {
-    if (app->orientation_device) {
-        orientation_t orientation = app->orientation_device->_get_orientation(app->orientation_device);
-        if (app->is_flipped) {
-            if (orientation == ORIENTATION_0) {
-                return false;
-            } else {
-                return true;
-            }
-        } else {
-            if (orientation == ORIENTATION_180) {
-                return true;
-            } else {
-                return false;
-            }
-        }
-    }
-    return false;
-}
 
 static void save_state(state_t *app) {
     // Work around the truncation bug by removing the file first
@@ -600,13 +575,6 @@ static state_t *init_app(char const *font_path) {
     app->last_cursor_blink   = get_ticks_ms();
     app->needs_full_redraw   = true;
     app->has_been_edited     = false;
-    app->last_flip_check     = get_ticks_ms();
-    app->is_flipped          = false;
-
-    app->orientation_device = (orientation_device_t *)device_get("ORIENTATION0");
-    if (!app->orientation_device) {
-        printf("Unable to open the orientation sensor device!\n");
-    }
 
     return app;
 }
@@ -663,18 +631,12 @@ static void render_frame(state_t *app) {
         }
     }
 
-    if (app->cursor_visible && !app->is_flipped) {
+    if (app->cursor_visible) {
         render_cursor(app);
         needs_update = true;
     }
 
     if (needs_update) {
-        if (app->is_flipped) {
-            window_flags_set(app->window, window_flags_get(app->window) | WINDOW_FLAG_FLIP_HORIZONTAL);
-        } else {
-            window_flags_set(app->window, window_flags_get(app->window) & ~WINDOW_FLAG_FLIP_HORIZONTAL);
-        }
-
         memcpy(app->window_framebuffer->pixels, app->framebuffer, WINDOW_WIDTH * WINDOW_HEIGHT * 2);
         window_present(app->window, true, NULL, 0);
         maybe_save(app);
@@ -809,31 +771,9 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    event_t event;
+    event_t  event;
+    uint32_t now;
     while (running) {
-        uint32_t now = get_ticks_ms();
-        if (now - app->last_flip_check > 1000) {
-            bool should_flip = get_orientation(app);
-            if (should_flip != app->is_flipped) {
-                printf("Flipping ...\n");
-                app->is_flipped        = should_flip;
-                app->needs_full_redraw = true;
-
-                if (app->is_flipped) {
-                    // Render a last frame before sleeping
-                    render_frame(app);
-                }
-            }
-            app->last_flip_check = now;
-        }
-
-        if (app->is_flipped) {
-            // Don't burn precious CPU cycles and battery when just
-            // being a badge
-            usleep(1000 * 1000);
-            continue;
-        }
-
         event = window_event_poll(app->window, false, 0);
         switch (event.type) {
             case EVENT_QUIT: running = 0; break;

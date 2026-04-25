@@ -908,6 +908,8 @@ simple_function:
   - device_get
   - get_mac_address
   - get_num_tasks
+  - compositor_get_autorotate
+  - compositor_set_autorotate
   - get_screen_info
   - mkdir_p
   - ota_get_invalid_version

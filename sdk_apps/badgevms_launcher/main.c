@@ -127,6 +127,9 @@ typedef struct {
     int              saved_home_scroll;
     /* Parsed apps.json kept alive for folder lookups */
     cJSON           *apps_json;
+    /* Icon cache: one entry per ctx->applications[], indexed by position */
+    uint16_t       **app_icons;       /* NULL = no icon found */
+    bool            *app_icons_tried; /* true = load already attempted */
 } Launcher_Context;
 
 static inline uint16_t rgb888_to_rgb565_color(uint32_t rgb888) {
@@ -246,6 +249,123 @@ static void draw_app_subtitle(Launcher_Context *ctx, int x, int y,
     draw_text(ctx, x, y, sub, color);
 }
 
+/* ---- Icon rendering ---- */
+
+#define ICON_INNER  44  /* usable pixels inside the 48×48 box after the 2px border */
+#define ICON_ART    12  /* pixel-art grid size */
+#define ICON_SCALE   3  /* renders 12×12 art → 36×36 px; centred in ICON_INNER with 4px margin */
+
+/* 12×12 bitmaps: bit 11 = leftmost column (col 0), bit 0 = rightmost (col 11) */
+
+/* App window: full border, title bar (row 1 has close-button gap), separator, 3×3 dot grid */
+static const uint16_t ICON_DEFAULT_APP[ICON_ART] = {
+    0xFFF,  /* ############ (top border)       */
+    0xFFD,  /* ##########.# (title bar)        */
+    0xFFF,  /* ############ (title separator)  */
+    0x801,  /* #          # (body)             */
+    0xA49,  /* # #  #  # # (dot row 1)         */
+    0x801,  /* #          #                    */
+    0xA49,  /* # #  #  # # (dot row 2)         */
+    0x801,  /* #          #                    */
+    0xA49,  /* # #  #  # # (dot row 3)         */
+    0x801,  /* #          #                    */
+    0x801,  /* #          #                    */
+    0xFFF,  /* ############ (bottom border)    */
+};
+
+/* Classic folder shape with three decreasing content lines */
+static const uint16_t ICON_FOLDER[ICON_ART] = {
+    0xE00,  /* ###           (tab at top-left) */
+    0xFFF,  /* ############ */
+    0x801,  /* #          # */
+    0xBF9,  /* # ####### .# (long file line) */
+    0x801,  /* #          # */
+    0xBF1,  /* # ######  .# (medium) */
+    0x801,  /* #          # */
+    0xBC1,  /* # ####    .# (short) */
+    0x801,  /* #          # */
+    0x801,  /* #          # */
+    0x801,  /* #          # */
+    0xFFF,  /* ############ */
+};
+
+/* Render a 12×12 pixel-art bitmap at ICON_SCALE× inside an icon box.
+   x,y are the top-left of the 48×48 box. */
+static void draw_pixel_icon(Launcher_Context *ctx, int bx, int by,
+                             const uint16_t *bitmap, uint32_t color) {
+    int x0 = bx + 2 + (ICON_INNER - ICON_ART * ICON_SCALE) / 2;
+    int y0 = by + 2 + (ICON_INNER - ICON_ART * ICON_SCALE) / 2;
+    for (int row = 0; row < ICON_ART; row++) {
+        for (int col = 0; col < ICON_ART; col++) {
+            if (bitmap[row] & (0x800 >> col)) {
+                draw_rect(ctx, x0 + col * ICON_SCALE, y0 + row * ICON_SCALE,
+                          ICON_SCALE, ICON_SCALE, color);
+            }
+        }
+    }
+}
+
+/* Render a pre-scaled ICON_INNER×ICON_INNER RGB565 pixel buffer inside a box. */
+static void draw_scaled_icon(Launcher_Context *ctx, int bx, int by,
+                              const uint16_t *pixels) {
+    int x0 = bx + 2;
+    int y0 = by + 2;
+    for (int row = 0; row < ICON_INNER; row++) {
+        int py = y0 + row;
+        if (py < 0 || py >= SCREEN_HEIGHT) continue;
+        for (int col = 0; col < ICON_INNER; col++) {
+            int px = x0 + col;
+            if (px >= 0 && px < SCREEN_WIDTH)
+                ctx->pixels[py * SCREEN_WIDTH + px] = pixels[row * ICON_INNER + col];
+        }
+    }
+}
+
+/* Look up (and lazy-load) the PNG icon for an app.
+   Returns pre-scaled RGB565 pixels or NULL if the app has no icon. */
+static uint16_t *get_app_icon(Launcher_Context *ctx, const char *uid) {
+    if (!ctx->app_icons || !ctx->app_icons_tried) return NULL;
+
+    /* Find this app's index */
+    int idx = -1;
+    for (size_t i = 0; i < ctx->num_apps; i++) {
+        if (strcmp(ctx->applications[i]->unique_identifier, uid) == 0) {
+            idx = (int)i;
+            break;
+        }
+    }
+    if (idx < 0) return NULL;
+
+    if (ctx->app_icons_tried[idx])
+        return ctx->app_icons[idx];
+
+    ctx->app_icons_tried[idx] = true;
+
+    char path[128];
+    snprintf(path, sizeof(path), "APPS:[%s]icon.png", uid);
+    int w, h, ch;
+    unsigned char *data = stbi_load(path, &w, &h, &ch, 4);
+    if (!data) return NULL;
+
+    uint16_t bg = rgb888_to_rgb565_color(CDE_BUTTON_COLOR);
+    uint16_t *buf = malloc(ICON_INNER * ICON_INNER * sizeof(uint16_t));
+    if (buf) {
+        for (int y = 0; y < ICON_INNER; y++) {
+            for (int x = 0; x < ICON_INNER; x++) {
+                int sx = x * w / ICON_INNER;
+                int sy = y * h / ICON_INNER;
+                int i4 = (sy * w + sx) * 4;
+                uint8_t r = data[i4], g = data[i4+1], b = data[i4+2], a = data[i4+3];
+                buf[y * ICON_INNER + x] = (a < 128) ? bg
+                    : (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
+            }
+        }
+        ctx->app_icons[idx] = buf;
+    }
+    stbi_image_free(data);
+    return ctx->app_icons[idx];
+}
+
 static void draw_about_dialog(Launcher_Context *ctx) {
     int dialog_w = 450;
     int dialog_h = 350;
@@ -324,7 +444,7 @@ static void draw_launcher_window(Launcher_Context *ctx) {
     /* --- Item list area --- */
     int list_y      = window_y + title_h + 15;
     int list_h      = window_h - title_h - 70;
-    int item_height = 80;
+    int item_height = 76;
 
     draw_rect(ctx, window_x + 15, list_y, window_w - 30, list_h, 0xFFFFFF);
     draw_3d_border(ctx, window_x + 15, list_y, window_w - 30, list_h, 1);
@@ -352,8 +472,7 @@ static void draw_launcher_window(Launcher_Context *ctx) {
         int icon_x    = item_x + 10;
         int icon_y    = item_y + (item_height - icon_size) / 2;
 
-        uint32_t icon_color = selected ? CDE_SELECTED_TEXT : CDE_BUTTON_COLOR;
-        draw_rect(ctx, icon_x, icon_y, icon_size, icon_size, icon_color);
+        draw_rect(ctx, icon_x, icon_y, icon_size, icon_size, CDE_BUTTON_COLOR);
         draw_3d_border(ctx, icon_x, icon_y, icon_size, icon_size, 1);
 
         int text_x = icon_x + icon_size + 15;
@@ -364,6 +483,11 @@ static void draw_launcher_window(Launcher_Context *ctx) {
             draw_text_bold(ctx, text_x, item_y + 10, app->name, text_color);
             draw_app_subtitle(ctx, text_x, item_y + 35, app,
                               selected ? CDE_SELECTED_TEXT : CDE_INACTIVE_TEXT);
+            uint16_t *icon_px = get_app_icon(ctx, app->unique_identifier);
+            if (icon_px)
+                draw_scaled_icon(ctx, icon_x, icon_y, icon_px);
+            else
+                draw_pixel_icon(ctx, icon_x, icon_y, ICON_DEFAULT_APP, 0x1060B0);
         } else {
             /* Home view: ITEM_APP or ITEM_FOLDER */
             launcher_item_t *item = &ctx->items[i];
@@ -371,9 +495,12 @@ static void draw_launcher_window(Launcher_Context *ctx) {
                 draw_text_bold(ctx, text_x, item_y + 10, item->app->name, text_color);
                 draw_app_subtitle(ctx, text_x, item_y + 35, item->app,
                                   selected ? CDE_SELECTED_TEXT : CDE_INACTIVE_TEXT);
+                uint16_t *icon_px = get_app_icon(ctx, item->app->unique_identifier);
+                if (icon_px)
+                    draw_scaled_icon(ctx, icon_x, icon_y, icon_px);
+                else
+                    draw_pixel_icon(ctx, icon_x, icon_y, ICON_DEFAULT_APP, 0x1060B0);
             } else {
-                /* Folder row: draw "[F]" inside icon box, show app count as subtitle */
-                draw_text_bold(ctx, icon_x + 14, icon_y + 16, "[F]", text_color);
                 draw_text_bold(ctx, text_x, item_y + 10, item->folder.name, text_color);
                 char sub[48];
                 snprintf(sub, sizeof(sub), "%d app%s",
@@ -381,6 +508,7 @@ static void draw_launcher_window(Launcher_Context *ctx) {
                          item->folder.app_count == 1 ? "" : "s");
                 draw_text(ctx, text_x, item_y + 35, sub,
                           selected ? CDE_SELECTED_TEXT : CDE_INACTIVE_TEXT);
+                draw_pixel_icon(ctx, icon_x, icon_y, ICON_FOLDER, 0xD09000);
             }
         }
 
@@ -612,6 +740,71 @@ static void draw_boot_screen(
     draw_text_centered(ctx, 0, text_y, SCREEN_WIDTH, status, 0xAAAAAA);
 }
 
+/* ── Terminal-style boot animation ───────────────────────────────────────── */
+#define TERM_LINE_MS   120   /* ms between successive dmesg lines             */
+
+static const char * const TERM_DMESG[] = {
+    "[    0.000000] BadgeVMS/RTOS booting on ESP32-P4 rev.0",
+    "[    0.000218] CPU: RISC-V rv32imafc ISA @ 360 MHz",
+    "[    0.001847] Memory: 768 kB SRAM + 8192 kB PSRAM",
+    "[    0.003102] why_io: VFS layer initialised",
+    "[    0.004571] FATFS: mounted APPS: (7168 kB)",
+    "[    0.005812] compositor: framebuffer 720x720 RGB565 ready",
+    "[    0.007234] elf_loader: symbol table loaded (342 entries)",
+    "[    0.008901] app_registry: scanning installed apps",
+    "[    0.011402] app_registry: 12 applications found",
+    "[    0.012881] wifi: MAC de:ad:be:ef:ca:fe",
+    "[    0.013507] wifi: mode station",
+    /* line 11 = hostname, built dynamically at runtime */
+};
+#define TERM_DMESG_STATIC  11
+#define TERM_DMESG_TOTAL   12
+
+static const char * const TERM_ART[] = {
+    "  ___           _           _   ___  __  _______",
+    " | _ ) __ _ __| | __ _ ___| | | |  \\/  / ___|  ",
+    " | _ \\/ _`/ _`|/ _`/ -_) |_| | |\\/| \\__ \\  ",
+    " |___/\\__,_\\__,_|\\__, \\___||___/|_|  |_|___/  ",
+    "                  |___/                          ",
+};
+#define TERM_ART_LINES  (sizeof(TERM_ART) / sizeof(TERM_ART[0]))
+
+static void draw_terminal_boot_screen(
+    Launcher_Context *ctx,
+    uint32_t          elapsed_ms,
+    const char       *hostname
+) {
+    memset(ctx->pixels, 0, SCREEN_WIDTH * SCREEN_HEIGHT * sizeof(uint16_t));
+
+    char host_line[72];
+    snprintf(host_line, sizeof(host_line),
+             "[    0.014230] network: hostname %s",
+             (hostname && hostname[0]) ? hostname : "why2025badge");
+
+    const int x0 = 8;
+    const int lh = 26;   /* font 24 px + 2 px gap */
+    int       y  = 8;
+
+    int nvis = (int)(elapsed_ms / TERM_LINE_MS);
+    if (nvis > TERM_DMESG_TOTAL) nvis = TERM_DMESG_TOTAL;
+
+    for (int i = 0; i < nvis; i++) {
+        const char *line = (i < TERM_DMESG_STATIC) ? TERM_DMESG[i] : host_line;
+        draw_text(ctx, x0, y, line, 0x808080);
+        y += lh;
+    }
+
+    if (nvis >= TERM_DMESG_TOTAL) {
+        y += lh;  /* blank line */
+        for (size_t i = 0; i < TERM_ART_LINES; i++) {
+            draw_text(ctx, x0, y, TERM_ART[i], 0xBBBBBB);
+            y += lh;
+        }
+        y += lh;  /* blank line */
+        draw_text(ctx, x0, y, "WHY2025 Badge booting up...", 0xFFFFFF);
+    }
+}
+
 static void build_item_list(Launcher_Context *ctx) {
     application_t **apps     = ctx->applications;
     size_t          num_apps = ctx->num_apps;
@@ -760,6 +953,10 @@ static bool run_launcher(
     ctx.pixels      = framebuffer->pixels;
 
     build_item_list(&ctx);
+
+    ctx.app_icons       = calloc(num, sizeof(uint16_t *));
+    ctx.app_icons_tried = calloc(num, sizeof(bool));
+
     event_t e;
 
     while (!ctx.quit) {
@@ -784,6 +981,12 @@ static bool run_launcher(
     free(ctx.items);
     free(ctx.folder_apps);
     cJSON_Delete(ctx.apps_json);
+    if (ctx.app_icons) {
+        for (size_t i = 0; i < ctx.num_apps; i++)
+            free(ctx.app_icons[i]);
+        free(ctx.app_icons);
+    }
+    free(ctx.app_icons_tried);
 
     return true;
 }
@@ -834,9 +1037,11 @@ int main(int argc, char *argv[]) {
         scan_thread(NULL);
     }
 
-    /* 5. Read badge identity from config for boot screen (non-fatal) */
+    /* 5. Read badge identity and boot animation choice from config (non-fatal) */
     char boot_owner_name[64]  = {0};
+    char boot_hostname[128]   = "why2025badge";
     bool boot_display_name    = false;
+    int  boot_animation       = 0;   /* 0 = splash, 1 = terminal */
     {
         FILE *cfg_f = fopen("APPS:[badgevms_launcher]config.json", "r");
         if (cfg_f) {
@@ -853,11 +1058,18 @@ int main(int argc, char *argv[]) {
                     if (cfg) {
                         cJSON *dub = cJSON_GetObjectItem(cfg, "display_username_at_boot");
                         cJSON *bon = cJSON_GetObjectItem(cfg, "badge_owner_name");
+                        cJSON *hn  = cJSON_GetObjectItem(cfg, "hostname");
+                        cJSON *ba  = cJSON_GetObjectItem(cfg, "boot_animation");
                         if (cJSON_IsBool(dub) && cJSON_IsTrue(dub))
                             boot_display_name = true;
                         if (cJSON_IsString(bon) && bon->valuestring)
                             strncpy(boot_owner_name, bon->valuestring,
                                     sizeof(boot_owner_name) - 1);
+                        if (cJSON_IsString(hn) && hn->valuestring)
+                            strncpy(boot_hostname, hn->valuestring,
+                                    sizeof(boot_hostname) - 1);
+                        if (cJSON_IsNumber(ba))
+                            boot_animation = (int)cJSON_GetNumberValue(ba);
                         cJSON_Delete(cfg);
                     }
                 }
@@ -882,8 +1094,12 @@ int main(int argc, char *argv[]) {
         float bright    = 0.875f + 0.125f * sinf(2.0f * (float)M_PI * elapsed_ms / 2000.0f);
         int   dot_count = (int)(elapsed_ms / 500) % 4;
 
-        draw_boot_screen(&boot_ctx, logo_data, logo_w, logo_h, logo_ch, bright, dot_count,
-                         boot_display_name ? boot_owner_name : NULL);
+        if (boot_animation == 1) {
+            draw_terminal_boot_screen(&boot_ctx, elapsed_ms, boot_hostname);
+        } else {
+            draw_boot_screen(&boot_ctx, logo_data, logo_w, logo_h, logo_ch, bright, dot_count,
+                             boot_display_name ? boot_owner_name : NULL);
+        }
         window_present(window, true, NULL, 0);
 
         if (atomic_load(&g_scan_done) && elapsed_ms >= 2000)

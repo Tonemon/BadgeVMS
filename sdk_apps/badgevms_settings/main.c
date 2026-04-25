@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include <badgevms/compositor.h>
 #include <badgevms/wifi.h>
 #include <badgevms/application.h>
 #include <SDL3/SDL.h>
@@ -137,6 +138,8 @@ typedef struct {
     char hostname[128];
     char badge_owner_name[64];
     bool display_username_at_boot;
+    bool autorotate;
+    int  boot_animation;   /* 0 = splash, 1 = terminal */
 
     /* Generic text input dialog */
     bool  show_text_input_dialog;
@@ -251,6 +254,102 @@ static void draw_button(app_context *ctx, int x, int y, int w, int h, char const
         text_y += 1;
     }
     draw_text_centered(ctx, x, text_y, w, text, CDE_TEXT_COLOR);
+}
+
+/* ── Settings pixel-art icons ─────────────────────────────────────────────── *
+ * 12×12 bitmaps: bit 11 = leftmost column (col 0), bit 0 = rightmost (col 11).
+ * Rendered at 3× scale → 36×36 px, centred inside the 48×48 icon box.        */
+#define ICON_ART    12
+#define ICON_SCALE   3
+#define ICON_INNER  44   /* usable px inside the 48×48 box after the 2px border */
+
+static const uint16_t ICON_WIFI[ICON_ART] = {
+    0x3FC, 0x402, 0x801, 0x000,  /* outer arc top, sides, gap                  */
+    0x1F8, 0x204, 0x000, 0x0F0,  /* mid arc top, sides, gap                    */
+    0x108, 0x000, 0x060, 0x060,  /* inner arc, gap, dot                        */
+};
+static const uint16_t ICON_PERSON[ICON_ART] = {
+    0x7FE, 0x402, 0x4F2, 0x50A,  /* ID card: top border, frame, name line, name*/
+    0x50A, 0x4F2, 0x462, 0x7FE,  /* name cont, separator, avatar arc, bottom   */
+    0x402, 0x5FA, 0x402, 0x7FE,  /* frame, data row, frame, card bottom        */
+};
+static const uint16_t ICON_MONITOR[ICON_ART] = {
+    0xFFF, 0x801, 0x8F1, 0xA65,  /* screen top, frame, globe equator, meridian */
+    0xBFD, 0xA65, 0x8F1, 0x801,  /* globe mid, meridian, equator, frame        */
+    0xFFF, 0x060, 0x060, 0x1F8,  /* screen bottom, stand neck, stand base      */
+};
+static const uint16_t ICON_TERMINAL[ICON_ART] = {
+    0xFFF,  /* XXXXXXXXXXXX  top border              */
+    0x801,  /* X          X  frame                   */
+    0x981,  /* X..XX......X  > top  (cols 0,3,4,11)  */
+    0x8C1,  /* X...XX.....X  > tip  (cols 0,4,5,11)  */
+    0x981,  /* X..XX......X  > bot  (cols 0,3,4,11)  */
+    0x801,  /* X          X  frame                   */
+    0x8F1,  /* X...XXXX...X  _ cursor (cols 0,4-7,11)*/
+    0x801,  /* X          X                          */
+    0x801,  /* X          X                          */
+    0xFFF,  /* XXXXXXXXXXXX  bottom border           */
+    0x000,
+    0x000,
+};
+static const uint16_t ICON_EYE[ICON_ART] = {
+    0x1F8, 0x000, 0x3FC, 0x402,  /* eyebrow, gap, upper lid arc, upper sides   */
+    0x8F1, 0x9F9, 0x861, 0x9F9,  /* iris ring, iris+pupil, iris ring, iris+pup */
+    0x8F1, 0x402, 0x3FC, 0x000,  /* iris ring, lower sides, lower lid arc      */
+};
+static const uint16_t ICON_ROTATE[ICON_ART] = {
+    0x060, 0x0F0, 0x1F8, 0x3FC,  /* up arrow tip → full arrowhead              */
+    0x060, 0x060, 0x060, 0x060,  /* shaft                                      */
+    0x3FC, 0x1F8, 0x0F0, 0x060,  /* down full arrowhead → tip                  */
+};
+static const uint16_t ICON_LIST[ICON_ART] = {
+    0xFFF, 0x97D, 0x801, 0x979,  /* border top, item1 (bullet+text), gap, item2*/
+    0x801, 0x97D, 0x801, 0x961,  /* gap, item3, gap, item4 (short)             */
+    0x801, 0xFFF, 0x000, 0x000,  /* gap, border bottom                         */
+};
+static const uint16_t ICON_HOUSE[ICON_ART] = {
+    0x060, 0x0F0, 0x1F8, 0x3FC,  /* roof tip → base                            */
+    0x7FE, 0x7FE, 0x4F2, 0x4F2,  /* roof base, walls, window row x2            */
+    0x462, 0x462, 0x7FE, 0x000,  /* door row x2, floor                         */
+};
+static const uint16_t ICON_INFO[ICON_ART] = {
+    0x1F8, 0x30C, 0x402, 0x4F2,  /* circle: top arc, upper sides, frame, i-dot */
+    0x402, 0x462, 0x462, 0x462,  /* gap, i-body (cols 5,6) x3                  */
+    0x4F2, 0x402, 0x30C, 0x1F8,  /* i-base wider, frame, lower sides, bot arc  */
+};
+static const uint16_t ICON_GEAR[ICON_ART] = {
+    0x0F0, 0x0F0, 0x6F6, 0xBFD,  /* N tooth, diagonal teeth, body outer        */
+    0x909, 0x909, 0x909, 0x909,  /* E/W teeth + centre hole (cols 0,3,8,11)    */
+    0xBFD, 0x6F6, 0x0F0, 0x0F0,  /* body outer, diagonal teeth, S tooth        */
+};
+
+static const uint16_t * const SETTINGS_ICONS[] = {
+    ICON_WIFI, ICON_PERSON, ICON_MONITOR, ICON_TERMINAL,
+    ICON_EYE,  ICON_ROTATE, ICON_LIST,   ICON_HOUSE, ICON_INFO,
+};
+static const uint32_t SETTINGS_ICON_COLORS[] = {
+    0x0070C0,  /* WiFi           – blue         */
+    0x804090,  /* Person         – purple       */
+    0x206080,  /* Monitor        – steel blue   */
+    0x208020,  /* Terminal       – terminal grn */
+    0x008890,  /* Eye            – teal         */
+    0xC04800,  /* Rotate         – orange       */
+    0x405868,  /* List           – slate        */
+    0x287030,  /* House          – green        */
+    0x003898,  /* Info           – royal blue   */
+};
+
+static void draw_pixel_icon(app_context *ctx, int bx, int by,
+                             const uint16_t *bitmap, uint32_t color) {
+    int x0 = bx + 2 + (ICON_INNER - ICON_ART * ICON_SCALE) / 2;
+    int y0 = by + 2 + (ICON_INNER - ICON_ART * ICON_SCALE) / 2;
+    for (int row = 0; row < ICON_ART; row++) {
+        for (int col = 0; col < ICON_ART; col++) {
+            if (bitmap[row] & (0x800 >> col))
+                draw_rect(ctx, x0 + col * ICON_SCALE, y0 + row * ICON_SCALE,
+                          ICON_SCALE, ICON_SCALE, color);
+        }
+    }
 }
 
 static void draw_signal_strength(app_context *ctx, int x, int y, int strength) {
@@ -826,6 +925,8 @@ static void launcher_config_load(app_context *ctx) {
     strncpy(ctx->hostname,        "why2025badge", sizeof(ctx->hostname) - 1);
     strncpy(ctx->badge_owner_name, "John",            sizeof(ctx->badge_owner_name) - 1);
     ctx->display_username_at_boot = false;
+    ctx->autorotate               = true;
+    ctx->boot_animation           = 0;
 
     FILE *f = fopen("APPS:[badgevms_launcher]config.json", "r");
     if (!f) return;
@@ -848,6 +949,8 @@ static void launcher_config_load(app_context *ctx) {
     cJSON *hn   = cJSON_GetObjectItem(cfg, "hostname");
     cJSON *bon  = cJSON_GetObjectItem(cfg, "badge_owner_name");
     cJSON *dub  = cJSON_GetObjectItem(cfg, "display_username_at_boot");
+    cJSON *ar   = cJSON_GetObjectItem(cfg, "autorotate");
+    cJSON *ba   = cJSON_GetObjectItem(cfg, "boot_animation");
     if (cJSON_IsBool(lda))
         ctx->launch_default_app = cJSON_IsTrue(lda);
     if (cJSON_IsString(da) && da->valuestring)
@@ -859,6 +962,10 @@ static void launcher_config_load(app_context *ctx) {
         strncpy(ctx->badge_owner_name, bon->valuestring, sizeof(ctx->badge_owner_name) - 1);
     if (cJSON_IsBool(dub))
         ctx->display_username_at_boot = cJSON_IsTrue(dub);
+    if (cJSON_IsBool(ar))
+        ctx->autorotate = cJSON_IsTrue(ar);
+    if (cJSON_IsNumber(ba))
+        ctx->boot_animation = (int)cJSON_GetNumberValue(ba);
     cJSON_Delete(cfg);
 
     /* Resolve display name by walking the installed app list.
@@ -895,6 +1002,8 @@ static void launcher_config_save(app_context *ctx) {
     cJSON_AddStringToObject(cfg, "hostname",                 ctx->hostname);
     cJSON_AddStringToObject(cfg, "badge_owner_name",         ctx->badge_owner_name);
     cJSON_AddBoolToObject(cfg,   "display_username_at_boot", ctx->display_username_at_boot);
+    cJSON_AddBoolToObject(cfg,   "autorotate",               ctx->autorotate);
+    cJSON_AddNumberToObject(cfg, "boot_animation",           ctx->boot_animation);
     char *json_str = cJSON_Print(cfg);
     cJSON_Delete(cfg);
     if (!json_str) return;
@@ -1022,7 +1131,9 @@ static void draw_main_settings(app_context *ctx) {
         "WiFi Settings",
         "Badge owner name",
         "Hostname",
+        "Boot animation",
         "Display username at boot",
+        "Autorotate",
         "Reorder Apps",
         "Default app",
         "About"
@@ -1031,24 +1142,33 @@ static void draw_main_settings(app_context *ctx) {
         "Configure wireless network connection",
         "Your name displayed at boot and in apps",
         "Network hostname of this badge",
+        "Animation shown while the badge is booting",
         "Show your name during the boot sequence",
+        "Flip display when badge is held upside down",
         "Organise launcher home screen and folders",
         "The application launched at boot",
         "Badge specifications"
     };
-    ctx->total_items = 7;
+    ctx->total_items = 9;
 
     int list_y      = window_y + title_h + 20;
     int list_h      = window_h - title_h - 80;
-    int item_height = 70;
+    int item_height = 65;
+
+    ctx->items_per_page = (list_h - 6) / item_height;
 
     draw_rect(ctx, window_x + 15, list_y, window_w - 30, list_h, 0xFFFFFF);
     draw_3d_border(ctx, window_x + 15, list_y, window_w - 30, list_h, 1);
 
-    for (int i = 0; i < ctx->total_items; i++) {
-        int item_y = list_y + 3 + i * item_height;
+    bool need_scrollbar = ctx->total_items > ctx->items_per_page;
+    int  visible_start  = ctx->scroll_offset;
+    int  visible_end    = visible_start + ctx->items_per_page;
+    if (visible_end > ctx->total_items) visible_end = ctx->total_items;
+
+    for (int i = visible_start; i < visible_end; i++) {
+        int item_y = list_y + 3 + (i - visible_start) * item_height;
         int item_x = window_x + 18;
-        int item_w = window_w - 36;
+        int item_w = window_w - 36 - (need_scrollbar ? 22 : 0);
 
         if (i == ctx->selected_item) {
             draw_rect(ctx, item_x, item_y, item_w, item_height - 2, CDE_SELECTED_BG);
@@ -1065,6 +1185,13 @@ static void draw_main_settings(app_context *ctx) {
         draw_rect(ctx, icon_x, icon_y_pos, icon_size, icon_size, icon_color);
         draw_3d_border(ctx, icon_x, icon_y_pos, icon_size, icon_size, 1);
 
+        {
+            size_t n = sizeof(SETTINGS_ICONS) / sizeof(SETTINGS_ICONS[0]);
+            const uint16_t *bmp = (size_t)i < n ? SETTINGS_ICONS[i] : ICON_GEAR;
+            uint32_t fg = (size_t)i < n ? SETTINGS_ICON_COLORS[i] : 0x506070;
+            draw_pixel_icon(ctx, icon_x, icon_y_pos, bmp, fg);
+        }
+
         int text_x = icon_x + icon_size + 15;
         draw_text_bold(ctx, text_x, item_y + 12, categories[i], text_color);
         draw_text(ctx, text_x, item_y + 40, descriptions[i], desc_color);
@@ -1079,7 +1206,18 @@ static void draw_main_settings(app_context *ctx) {
             const char *val = ctx->hostname[0] ? ctx->hostname : "(not set)";
             int val_x = item_x + item_w - get_text_width(val) - 15;
             draw_text(ctx, val_x, item_y + 12, val, val_color);
-        } else if (i == 3) { /* Display username at boot: inline [ON]/[OFF] */
+        } else if (i == 3) { /* Boot animation: inline [SPLASH]/[TERMINAL] cycle */
+            static const char * const anim_names[] = { "SPLASH", "TERMINAL" };
+            int idx = (ctx->boot_animation >= 0 && ctx->boot_animation <= 1)
+                      ? ctx->boot_animation : 0;
+            char toggle_str[16];
+            snprintf(toggle_str, sizeof(toggle_str), "[%s]", anim_names[idx]);
+            int title_w  = get_text_width(categories[i]);
+            int toggle_x = text_x + title_w + 2 * FONT_WIDTH;
+            uint32_t toggle_color = (i == ctx->selected_item)
+                ? CDE_SELECTED_TEXT : CDE_INACTIVE_TEXT;
+            draw_text_bold(ctx, toggle_x, item_y + 12, toggle_str, toggle_color);
+        } else if (i == 4) { /* Display username at boot: inline [ON]/[OFF] */
             int title_w    = get_text_width(categories[i]);
             int toggle_x   = text_x + title_w + 2 * FONT_WIDTH;
             const char *toggle_str = ctx->display_username_at_boot ? "[ON]" : "[OFF]";
@@ -1087,7 +1225,15 @@ static void draw_main_settings(app_context *ctx) {
                 ? CDE_SELECTED_TEXT
                 : (ctx->display_username_at_boot ? CDE_SUCCESS_COLOR : CDE_INACTIVE_TEXT);
             draw_text_bold(ctx, toggle_x, item_y + 12, toggle_str, toggle_color);
-        } else if (i == 5) { /* Default app: inline [ON]/[OFF] + right-aligned app name */
+        } else if (i == 5) { /* Autorotate: inline [ON]/[OFF] */
+            int title_w    = get_text_width(categories[i]);
+            int toggle_x   = text_x + title_w + 2 * FONT_WIDTH;
+            const char *toggle_str = ctx->autorotate ? "[ON]" : "[OFF]";
+            uint32_t toggle_color = (i == ctx->selected_item)
+                ? CDE_SELECTED_TEXT
+                : (ctx->autorotate ? CDE_SUCCESS_COLOR : CDE_INACTIVE_TEXT);
+            draw_text_bold(ctx, toggle_x, item_y + 12, toggle_str, toggle_color);
+        } else if (i == 7) { /* Default app: inline [ON]/[OFF] + right-aligned app name */
             int title_w    = get_text_width(categories[i]);
             int toggle_x   = text_x + title_w + 2 * FONT_WIDTH;
             const char *toggle_str = ctx->launch_default_app ? "[ON]" : "[OFF]";
@@ -1102,16 +1248,37 @@ static void draw_main_settings(app_context *ctx) {
             draw_text(ctx, name_x, item_y + 12, app_name, val_color);
         }
 
-        if (i < ctx->total_items - 1) {
+        if (i < visible_end - 1) {
             draw_rect(ctx, item_x, item_y + item_height - 2, item_w, 1, CDE_BORDER_DARK);
         }
+    }
+
+    /* Scrollbar */
+    if (need_scrollbar) {
+        int scrollbar_x = window_x + window_w - 35;
+        int scrollbar_y = list_y + 3;
+        int scrollbar_h = list_h - 6;
+        draw_rect(ctx, scrollbar_x, scrollbar_y, 20, scrollbar_h, CDE_BUTTON_COLOR);
+        draw_3d_border(ctx, scrollbar_x, scrollbar_y, 20, scrollbar_h, 1);
+
+        int thumb_h = (scrollbar_h * ctx->items_per_page) / ctx->total_items;
+        if (thumb_h < 30) thumb_h = 30;
+        int thumb_y = scrollbar_y;
+        if (ctx->total_items > ctx->items_per_page) {
+            thumb_y += ((scrollbar_h - thumb_h) * ctx->scroll_offset) /
+                       (ctx->total_items - ctx->items_per_page);
+        }
+        draw_rect(ctx, scrollbar_x + 3, thumb_y, 14, thumb_h, CDE_PANEL_COLOR);
+        draw_3d_border(ctx, scrollbar_x + 3, thumb_y, 14, thumb_h, 0);
     }
 
     /* Dynamic footer hint */
     const char *footer_hint;
     if (ctx->selected_item == 3)
+        footer_hint = "UP/DOWN: Navigate  ENTER/SPACE: Cycle  ESC: Exit";
+    else if (ctx->selected_item == 4 || ctx->selected_item == 5)
         footer_hint = "UP/DOWN: Navigate  ENTER/SPACE: Toggle  ESC: Exit";
-    else if (ctx->selected_item == 5)
+    else if (ctx->selected_item == 7)
         footer_hint = "UP/DOWN: Navigate  ENTER: Choose  SPACE: Toggle  ESC: Exit";
     else
         footer_hint = "UP/DOWN: Navigate  ENTER: Select  ESC: Exit";
@@ -1803,15 +1970,24 @@ static void handle_key_event(app_context *ctx, SDL_Event *event) {
     switch (ctx->current_screen) {
         case SCREEN_MAIN:
             if (key == SDLK_UP) {
-                if (ctx->selected_item > 0)
+                if (ctx->selected_item > 0) {
                     ctx->selected_item--;
-                else
+                    if (ctx->selected_item < ctx->scroll_offset)
+                        ctx->scroll_offset = ctx->selected_item;
+                } else {
                     ctx->selected_item = ctx->total_items - 1;
+                    ctx->scroll_offset = (ctx->total_items > ctx->items_per_page)
+                                         ? ctx->total_items - ctx->items_per_page : 0;
+                }
             } else if (key == SDLK_DOWN) {
-                if (ctx->selected_item < ctx->total_items - 1)
+                if (ctx->selected_item < ctx->total_items - 1) {
                     ctx->selected_item++;
-                else
+                    if (ctx->selected_item >= ctx->scroll_offset + ctx->items_per_page)
+                        ctx->scroll_offset = ctx->selected_item - ctx->items_per_page + 1;
+                } else {
                     ctx->selected_item = 0;
+                    ctx->scroll_offset = 0;
+                }
             } else if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
                 switch (ctx->selected_item) {
                     case 0:
@@ -1840,24 +2016,40 @@ static void handle_key_event(app_context *ctx, SDL_Event *event) {
                         ctx->text_input_max_len = (int)(sizeof(ctx->hostname) - 1);
                         ctx->show_text_input_dialog = true;
                         break;
-                    case 3: /* Display username at boot: toggle */
+                    case 3: /* Boot animation: cycle SPLASH → TERMINAL → SPLASH */
+                        ctx->boot_animation = (ctx->boot_animation + 1) % 2;
+                        launcher_config_save(ctx);
+                        break;
+                    case 4: /* Display username at boot: toggle */
                         ctx->display_username_at_boot = !ctx->display_username_at_boot;
                         launcher_config_save(ctx);
                         break;
-                    case 4: /* Reorder Apps */
+                    case 5: /* Autorotate: toggle */
+                        ctx->autorotate = !ctx->autorotate;
+                        compositor_set_autorotate(ctx->autorotate);
+                        launcher_config_save(ctx);
+                        break;
+                    case 6: /* Reorder Apps */
                         reorder_init(ctx);
                         nav_push(ctx, SCREEN_REORDER);
                         break;
-                    case 5: /* Default app: open chooser */
+                    case 7: /* Default app: open chooser */
                         app_chooser_open(ctx);
                         break;
-                    case 6: nav_push(ctx, SCREEN_ABOUT); break;
+                    case 8: nav_push(ctx, SCREEN_ABOUT); break;
                 }
             } else if (key == SDLK_SPACE) {
                 if (ctx->selected_item == 3) {
+                    ctx->boot_animation = (ctx->boot_animation + 1) % 2;
+                    launcher_config_save(ctx);
+                } else if (ctx->selected_item == 4) {
                     ctx->display_username_at_boot = !ctx->display_username_at_boot;
                     launcher_config_save(ctx);
                 } else if (ctx->selected_item == 5) {
+                    ctx->autorotate = !ctx->autorotate;
+                    compositor_set_autorotate(ctx->autorotate);
+                    launcher_config_save(ctx);
+                } else if (ctx->selected_item == 7) {
                     ctx->launch_default_app = !ctx->launch_default_app;
                     launcher_config_save(ctx);
                 }
