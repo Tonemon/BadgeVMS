@@ -2,7 +2,7 @@
     "unique_identifier": "badgevms_launcher",
     "name": "BadgeVMS Launcher",
     "author": "Team:Badge",
-    "version": "7",
+    "version": "8",
     "interpreter": "",
     "metadata_file": "",
     "binary_path": "badgevms_launcher.elf",
