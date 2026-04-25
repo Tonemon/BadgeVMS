@@ -255,6 +255,87 @@ static void draw_button(app_context *ctx, int x, int y, int w, int h, char const
     draw_text_centered(ctx, x, text_y, w, text, CDE_TEXT_COLOR);
 }
 
+/* ── Settings pixel-art icons ─────────────────────────────────────────────── *
+ * 12×12 bitmaps: bit 11 = leftmost column (col 0), bit 0 = rightmost (col 11).
+ * Rendered at 3× scale → 36×36 px, centred inside the 48×48 icon box.        */
+#define ICON_ART    12
+#define ICON_SCALE   3
+#define ICON_INNER  44   /* usable px inside the 48×48 box after the 2px border */
+
+static const uint16_t ICON_WIFI[ICON_ART] = {
+    0x000, 0x3FC, 0x402, 0x000,  /* large arc (cols 2-9) + sides (cols 1,10)   */
+    0x1F8, 0x204, 0x000, 0x0F0,  /* medium arc, small arc                      */
+    0x000, 0x060, 0x060, 0x000,  /* dot (cols 5,6)                             */
+};
+static const uint16_t ICON_PERSON[ICON_ART] = {
+    0x000, 0x0F0, 0x108, 0x108,  /* head (cols 4-7 top, cols 3,8 sides)        */
+    0x0F0, 0x060, 0x3FC, 0x402,  /* head bottom, neck, shoulders, body         */
+    0x402, 0x402, 0x402, 0x7FE,  /* body sides, body base                      */
+};
+static const uint16_t ICON_MONITOR[ICON_ART] = {
+    0xFFF, 0x801, 0x801, 0x801,  /* screen top border + frame sides            */
+    0x861, 0x801, 0x801, 0xFFF,  /* cursor row (cols 5,6), frame, bottom       */
+    0x060, 0x060, 0x1F8, 0x000,  /* stand neck, stand base (cols 3-8)          */
+};
+static const uint16_t ICON_EYE[ICON_ART] = {
+    0x000, 0x000, 0x3FC, 0x402,  /* eyelid arc (cols 2-9), upper sides         */
+    0x861, 0x861, 0x402, 0x3FC,  /* wide + pupil (cols 5,6), lower sides, arc  */
+    0x000, 0x000, 0x000, 0x000,
+};
+static const uint16_t ICON_ROTATE[ICON_ART] = {
+    0x060, 0x0F0, 0x060, 0x060,  /* up-arrow tip, head, shaft                  */
+    0x060, 0x060, 0x060, 0x060,  /* shaft                                      */
+    0x0F0, 0x060, 0x000, 0x000,  /* down-arrow head, tip                       */
+};
+static const uint16_t ICON_LIST[ICON_ART] = {
+    0x000, 0x000, 0x7FE, 0x7FE,  /* line 1 (cols 1-10)                         */
+    0x000, 0x000, 0x7FE, 0x7FE,  /* line 2                                     */
+    0x000, 0x000, 0x7FE, 0x7FE,  /* line 3                                     */
+};
+static const uint16_t ICON_HOUSE[ICON_ART] = {
+    0x060, 0x0F0, 0x1F8, 0x3FC,  /* roof tip → base                            */
+    0x7FE, 0x7FE, 0x7FE, 0x462,  /* roof base, walls, door row (cols 1,5,6,10) */
+    0x462, 0x462, 0x7FE, 0x000,  /* door, floor                                */
+};
+static const uint16_t ICON_INFO[ICON_ART] = {
+    0x0F0, 0x30C, 0x402, 0x462,  /* circle (cols 4-7 top, 2,3,8,9 sides, 1,10) */
+    0x402, 0x462, 0x462, 0x462,  /* dot, gap, i-body (cols 5,6)                */
+    0x4F2, 0x402, 0x30C, 0x0F0,  /* i-base wider (cols 1,4-7,10), circle bot   */
+};
+static const uint16_t ICON_GEAR[ICON_ART] = {
+    0x0F0, 0x0F0, 0x6F6, 0xBFD,  /* N tooth, diagonal teeth, body outer        */
+    0x909, 0x909, 0x909, 0x909,  /* E/W teeth + centre hole (cols 0,3,8,11)    */
+    0xBFD, 0x6F6, 0x0F0, 0x0F0,  /* body outer, diagonal teeth, S tooth        */
+};
+
+static const uint16_t * const SETTINGS_ICONS[] = {
+    ICON_WIFI, ICON_PERSON, ICON_MONITOR, ICON_EYE,
+    ICON_ROTATE, ICON_LIST, ICON_HOUSE, ICON_INFO,
+};
+static const uint32_t SETTINGS_ICON_COLORS[] = {
+    0x0070C0,  /* WiFi         – blue         */
+    0x804090,  /* Person       – purple       */
+    0x206080,  /* Monitor      – steel blue   */
+    0x008890,  /* Eye          – teal         */
+    0xC04800,  /* Rotate       – orange       */
+    0x405868,  /* List         – slate        */
+    0x287030,  /* House        – green        */
+    0x003898,  /* Info         – royal blue   */
+};
+
+static void draw_pixel_icon(app_context *ctx, int bx, int by,
+                             const uint16_t *bitmap, uint32_t color) {
+    int x0 = bx + 2 + (ICON_INNER - ICON_ART * ICON_SCALE) / 2;
+    int y0 = by + 2 + (ICON_INNER - ICON_ART * ICON_SCALE) / 2;
+    for (int row = 0; row < ICON_ART; row++) {
+        for (int col = 0; col < ICON_ART; col++) {
+            if (bitmap[row] & (0x800 >> col))
+                draw_rect(ctx, x0 + col * ICON_SCALE, y0 + row * ICON_SCALE,
+                          ICON_SCALE, ICON_SCALE, color);
+        }
+    }
+}
+
 static void draw_signal_strength(app_context *ctx, int x, int y, int strength) {
     int bar_width   = 4;
     int bar_spacing = 2;
@@ -1073,6 +1154,13 @@ static void draw_main_settings(app_context *ctx) {
         uint32_t icon_color = (i == ctx->selected_item) ? CDE_SELECTED_TEXT : CDE_BUTTON_COLOR;
         draw_rect(ctx, icon_x, icon_y_pos, icon_size, icon_size, icon_color);
         draw_3d_border(ctx, icon_x, icon_y_pos, icon_size, icon_size, 1);
+
+        {
+            size_t n = sizeof(SETTINGS_ICONS) / sizeof(SETTINGS_ICONS[0]);
+            const uint16_t *bmp = (size_t)i < n ? SETTINGS_ICONS[i] : ICON_GEAR;
+            uint32_t fg = (size_t)i < n ? SETTINGS_ICON_COLORS[i] : 0x506070;
+            draw_pixel_icon(ctx, icon_x, icon_y_pos, bmp, fg);
+        }
 
         int text_x = icon_x + icon_size + 15;
         draw_text_bold(ctx, text_x, item_y + 12, categories[i], text_color);
