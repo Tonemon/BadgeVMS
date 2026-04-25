@@ -1155,13 +1155,20 @@ static void draw_main_settings(app_context *ctx) {
     int list_h      = window_h - title_h - 80;
     int item_height = 65;
 
+    ctx->items_per_page = (list_h - 6) / item_height;
+
     draw_rect(ctx, window_x + 15, list_y, window_w - 30, list_h, 0xFFFFFF);
     draw_3d_border(ctx, window_x + 15, list_y, window_w - 30, list_h, 1);
 
-    for (int i = 0; i < ctx->total_items; i++) {
-        int item_y = list_y + 3 + i * item_height;
+    bool need_scrollbar = ctx->total_items > ctx->items_per_page;
+    int  visible_start  = ctx->scroll_offset;
+    int  visible_end    = visible_start + ctx->items_per_page;
+    if (visible_end > ctx->total_items) visible_end = ctx->total_items;
+
+    for (int i = visible_start; i < visible_end; i++) {
+        int item_y = list_y + 3 + (i - visible_start) * item_height;
         int item_x = window_x + 18;
-        int item_w = window_w - 36;
+        int item_w = window_w - 36 - (need_scrollbar ? 22 : 0);
 
         if (i == ctx->selected_item) {
             draw_rect(ctx, item_x, item_y, item_w, item_height - 2, CDE_SELECTED_BG);
@@ -1241,9 +1248,28 @@ static void draw_main_settings(app_context *ctx) {
             draw_text(ctx, name_x, item_y + 12, app_name, val_color);
         }
 
-        if (i < ctx->total_items - 1) {
+        if (i < visible_end - 1) {
             draw_rect(ctx, item_x, item_y + item_height - 2, item_w, 1, CDE_BORDER_DARK);
         }
+    }
+
+    /* Scrollbar */
+    if (need_scrollbar) {
+        int scrollbar_x = window_x + window_w - 35;
+        int scrollbar_y = list_y + 3;
+        int scrollbar_h = list_h - 6;
+        draw_rect(ctx, scrollbar_x, scrollbar_y, 20, scrollbar_h, CDE_BUTTON_COLOR);
+        draw_3d_border(ctx, scrollbar_x, scrollbar_y, 20, scrollbar_h, 1);
+
+        int thumb_h = (scrollbar_h * ctx->items_per_page) / ctx->total_items;
+        if (thumb_h < 30) thumb_h = 30;
+        int thumb_y = scrollbar_y;
+        if (ctx->total_items > ctx->items_per_page) {
+            thumb_y += ((scrollbar_h - thumb_h) * ctx->scroll_offset) /
+                       (ctx->total_items - ctx->items_per_page);
+        }
+        draw_rect(ctx, scrollbar_x + 3, thumb_y, 14, thumb_h, CDE_PANEL_COLOR);
+        draw_3d_border(ctx, scrollbar_x + 3, thumb_y, 14, thumb_h, 0);
     }
 
     /* Dynamic footer hint */
@@ -1944,15 +1970,24 @@ static void handle_key_event(app_context *ctx, SDL_Event *event) {
     switch (ctx->current_screen) {
         case SCREEN_MAIN:
             if (key == SDLK_UP) {
-                if (ctx->selected_item > 0)
+                if (ctx->selected_item > 0) {
                     ctx->selected_item--;
-                else
+                    if (ctx->selected_item < ctx->scroll_offset)
+                        ctx->scroll_offset = ctx->selected_item;
+                } else {
                     ctx->selected_item = ctx->total_items - 1;
+                    ctx->scroll_offset = (ctx->total_items > ctx->items_per_page)
+                                         ? ctx->total_items - ctx->items_per_page : 0;
+                }
             } else if (key == SDLK_DOWN) {
-                if (ctx->selected_item < ctx->total_items - 1)
+                if (ctx->selected_item < ctx->total_items - 1) {
                     ctx->selected_item++;
-                else
+                    if (ctx->selected_item >= ctx->scroll_offset + ctx->items_per_page)
+                        ctx->scroll_offset = ctx->selected_item - ctx->items_per_page + 1;
+                } else {
                     ctx->selected_item = 0;
+                    ctx->scroll_offset = 0;
+                }
             } else if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
                 switch (ctx->selected_item) {
                     case 0:

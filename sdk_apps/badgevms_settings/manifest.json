@@ -2,7 +2,7 @@
     "unique_identifier": "badgevms_settings",
     "name": "Settings",
     "author": "Team:Badge & contributors",
-    "version": "2.1",
+    "version": "2.3",
     "interpreter": "",
     "metadata_file": "",
     "binary_path": "badgevms_settings.elf",
