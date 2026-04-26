@@ -2,7 +2,7 @@
   "items": [
     { "type": "app",    "uid": "why2025_namebadge" },
     { "type": "app",    "uid": "why2025_sponsors" },
-    { "type": "folder", "name": "Games",       "apps": ["doomgeneric", "sdl2_test", "sdl_test"] },
+    { "type": "folder", "name": "Games",       "apps": ["doomgeneric", "nes_launcher", "nes_emu", "gb_launcher", "gb_emu", "sms_launcher", "sms_emu", "sdl2_test", "sdl_test"] },
     { "type": "folder", "name": "Diagnostics", "apps": [
         "hello", "test_hardware", "memtester", "bench_basic_a", "bench_basic_b",
         "test_appdb", "test_bmi270", "test_bme690", "test_curl",

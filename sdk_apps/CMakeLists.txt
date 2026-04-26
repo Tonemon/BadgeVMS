@@ -299,6 +299,24 @@ build_app(gb_emu PREINSTALL
      gb_badgevms.c
 )
 
+build_app(sms_emu PREINSTALL
+    SOURCES
+     sms_badgevms.c
+     core/sms.c
+     core/sms_bus.c
+     core/sms_z80.c
+     core/sms_joypad.c
+     core/sms_vdp.c
+     core/sms_rom_database.c
+     core/sms_savestate.c
+     core/scheduler.c
+     core/sn76489.c
+     core/blargg/blip_buf.c
+     core/blargg/blip_wrap.c
+    COMPILE_DEFINITIONS
+     "sms_static_assert=_Static_assert"
+)
+
 build_app(nes_emu PREINSTALL
     SOURCES
      nes_badgevms.c
