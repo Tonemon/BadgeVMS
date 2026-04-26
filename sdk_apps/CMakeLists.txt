@@ -268,6 +268,24 @@ build_app(doomgeneric PREINSTALL
      doomgeneric/z_zone.c
 )
 
+build_app(nes_launcher PREINSTALL
+    SOURCES
+     main.c
+     ${CMAKE_CURRENT_SOURCE_DIR}/shared/rom_browser.c
+)
+
+build_app(gb_launcher PREINSTALL
+    SOURCES
+     main.c
+     ${CMAKE_CURRENT_SOURCE_DIR}/shared/rom_browser.c
+)
+
+build_app(sms_launcher PREINSTALL
+    SOURCES
+     main.c
+     ${CMAKE_CURRENT_SOURCE_DIR}/shared/rom_browser.c
+)
+
 #
 # Diagnostic apps
 #
