@@ -393,6 +393,12 @@ build_app(nes_emu PREINSTALL
      ${CMAKE_CURRENT_SOURCE_DIR}/nes_emu/nofrendo
 )
 
+build_app(random_game PREINSTALL
+    SOURCES
+     main.c
+     ${CMAKE_CURRENT_SOURCE_DIR}/shared/rom_browser.c
+)
+
 #
 # Diagnostic apps
 #
