@@ -35,7 +35,7 @@ set(APP_ELF_DIR ${CMAKE_BINARY_DIR}/app_elfs)
 file(MAKE_DIRECTORY ${APP_ELF_DIR})
 
 function(build_app app_name)
-    cmake_parse_arguments(APP "PREINSTALL" "" "SOURCES;LIBRARIES;COMPILE_DEFINITIONS" ${ARGN})
+    cmake_parse_arguments(APP "PREINSTALL" "" "SOURCES;LIBRARIES;COMPILE_DEFINITIONS;INCLUDE_DIRS" ${ARGN})
 
     if(NOT APP_SOURCES)
         message(FATAL_ERROR "build_app: SOURCES must be specified for ${app_name}")
@@ -70,6 +70,13 @@ function(build_app app_name)
         endforeach()
     endif()
 
+    set(INCLUDE_FLAGS "")
+    if(APP_INCLUDE_DIRS)
+        foreach(DIR ${APP_INCLUDE_DIRS})
+            list(APPEND INCLUDE_FLAGS -I${DIR})
+        endforeach()
+    endif()
+
     add_custom_command(
         OUTPUT ${APP_ELF_DIR}/${app_name}.elf
         COMMAND ${CMAKE_C_COMPILER}
@@ -78,6 +85,7 @@ function(build_app app_name)
             -isystem${SDK_INCLUDE_DIR}
             -o ${APP_ELF_DIR}/${app_name}.elf
             -I ${APP_SOURCE_DIR}
+            ${INCLUDE_FLAGS}
             ${ABSOLUTE_SOURCES}
             ${LIBRARY_FLAGS}
             ${DEFINE_FLAGS}
@@ -284,6 +292,82 @@ build_app(sms_launcher PREINSTALL
     SOURCES
      main.c
      ${CMAKE_CURRENT_SOURCE_DIR}/shared/rom_browser.c
+)
+
+build_app(nes_emu PREINSTALL
+    SOURCES
+     nes_badgevms.c
+     nofrendo/nofrendo.c
+     nofrendo/nes/apu.c
+     nofrendo/nes/cpu.c
+     nofrendo/nes/dis.c
+     nofrendo/nes/input.c
+     nofrendo/nes/mem.c
+     nofrendo/nes/mmc.c
+     nofrendo/nes/nes.c
+     nofrendo/nes/ppu.c
+     nofrendo/nes/rom.c
+     nofrendo/nes/state.c
+     nofrendo/mappers/map000.c
+     nofrendo/mappers/map001.c
+     nofrendo/mappers/map002.c
+     nofrendo/mappers/map003.c
+     nofrendo/mappers/map004.c
+     nofrendo/mappers/map005.c
+     nofrendo/mappers/map007.c
+     nofrendo/mappers/map009.c
+     nofrendo/mappers/map010.c
+     nofrendo/mappers/map011.c
+     nofrendo/mappers/map015.c
+     nofrendo/mappers/map016.c
+     nofrendo/mappers/map018.c
+     nofrendo/mappers/map019.c
+     nofrendo/mappers/map020.c
+     nofrendo/mappers/map021.c
+     nofrendo/mappers/map022.c
+     nofrendo/mappers/map023.c
+     nofrendo/mappers/map024.c
+     nofrendo/mappers/map030.c
+     nofrendo/mappers/map031.c
+     nofrendo/mappers/map032.c
+     nofrendo/mappers/map033.c
+     nofrendo/mappers/map034.c
+     nofrendo/mappers/map040.c
+     nofrendo/mappers/map041.c
+     nofrendo/mappers/map042.c
+     nofrendo/mappers/map046.c
+     nofrendo/mappers/map050.c
+     nofrendo/mappers/map064.c
+     nofrendo/mappers/map065.c
+     nofrendo/mappers/map066.c
+     nofrendo/mappers/map070.c
+     nofrendo/mappers/map071.c
+     nofrendo/mappers/map073.c
+     nofrendo/mappers/map074.c
+     nofrendo/mappers/map075.c
+     nofrendo/mappers/map076.c
+     nofrendo/mappers/map078.c
+     nofrendo/mappers/map079.c
+     nofrendo/mappers/map085.c
+     nofrendo/mappers/map087.c
+     nofrendo/mappers/map093.c
+     nofrendo/mappers/map094.c
+     nofrendo/mappers/map119.c
+     nofrendo/mappers/map160.c
+     nofrendo/mappers/map162.c
+     nofrendo/mappers/map176.c
+     nofrendo/mappers/map185.c
+     nofrendo/mappers/map191.c
+     nofrendo/mappers/map192.c
+     nofrendo/mappers/map193.c
+     nofrendo/mappers/map194.c
+     nofrendo/mappers/map195.c
+     nofrendo/mappers/map206.c
+     nofrendo/mappers/map228.c
+     nofrendo/mappers/map229.c
+     nofrendo/mappers/map231.c
+    INCLUDE_DIRS
+     ${CMAKE_CURRENT_SOURCE_DIR}/nes_emu/nofrendo
 )
 
 #
