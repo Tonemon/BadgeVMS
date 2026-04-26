@@ -294,6 +294,11 @@ build_app(sms_launcher PREINSTALL
      ${CMAKE_CURRENT_SOURCE_DIR}/shared/rom_browser.c
 )
 
+build_app(gb_emu PREINSTALL
+    SOURCES
+     gb_badgevms.c
+)
+
 build_app(nes_emu PREINSTALL
     SOURCES
      nes_badgevms.c
