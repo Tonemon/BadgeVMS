@@ -1,0 +1,7 @@
+{
+    "uid": "sms_emu",
+    "name": "SMS Emulator",
+    "author": "BadgeVMS Contributors",
+    "version": "0.1.0",
+    "binary_path": "sms_emu.elf"
+}

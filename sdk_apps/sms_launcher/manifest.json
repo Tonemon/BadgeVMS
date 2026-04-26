@@ -1,0 +1,7 @@
+{
+    "uid": "sms_launcher",
+    "name": "Sega Master System Launcher",
+    "author": "BadgeVMS Contributors",
+    "version": "0.1.0",
+    "binary_path": "sms_launcher.elf"
+}

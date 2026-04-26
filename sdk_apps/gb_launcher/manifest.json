@@ -1,0 +1,7 @@
+{
+    "uid": "gb_launcher",
+    "name": "Game Boy Launcher",
+    "author": "BadgeVMS Contributors",
+    "version": "0.1.0",
+    "binary_path": "gb_launcher.elf"
+}
