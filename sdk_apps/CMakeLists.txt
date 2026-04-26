@@ -315,6 +315,8 @@ build_app(sms_emu PREINSTALL
      core/blargg/blip_wrap.c
     COMPILE_DEFINITIONS
      "sms_static_assert=_Static_assert"
+    INCLUDE_DIRS
+     ${CMAKE_CURRENT_SOURCE_DIR}/sms_emu/core
 )
 
 build_app(nes_emu PREINSTALL
