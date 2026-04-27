@@ -2,6 +2,7 @@
 #define ENABLE_SOUND 0
 #define ENABLE_LCD   1
 #include "peanut_gb.h"
+#include "emu_overlay.h"
 
 #include <badgevms/compositor.h>
 #include <badgevms/event.h>
@@ -27,12 +28,12 @@ static const uint16_t g_dmg_pal[4] = {
 };
 
 static struct gb_s    g_gb;
-static uint8_t       *g_rom        = NULL;
-static uint8_t       *g_cart_ram   = NULL;
+static uint8_t       *g_rom         = NULL;
+static uint8_t       *g_cart_ram    = NULL;
 static size_t         g_cart_ram_sz = 0;
-static window_handle_t g_win       = NULL;
-static framebuffer_t  *g_fb        = NULL;
-static bool           g_running    = true;
+static window_handle_t g_win        = NULL;
+static framebuffer_t  *g_fb         = NULL;
+static bool           g_running     = true;
 static char           g_save_path[256];
 
 /* ------------------------------------------------------------------ */
@@ -98,7 +99,7 @@ static void write_save(void) {
 int main(int argc, char **argv) {
     g_win = window_create("Game Boy Emulator",
                           (window_size_t){720, 720},
-                          WINDOW_FLAG_DOUBLE_BUFFERED | WINDOW_FLAG_FULLSCREEN);
+                          WINDOW_FLAG_DOUBLE_BUFFERED | WINDOW_FLAG_MAXIMIZED);
     g_fb  = window_framebuffer_create(g_win, (window_size_t){GB_W, GB_H},
                                       BADGEVMS_PIXELFORMAT_RGB565);
 
@@ -140,6 +141,10 @@ int main(int argc, char **argv) {
     }
 
     gb_init_lcd(&g_gb, lcd_draw_line);
+
+    char label[64];
+    emu_overlay_label(label, sizeof(label), argv[1], "[GB]");
+    window_title_set(g_win, label);
 
     /* Joypad: 0xFF = all released (active low) */
     g_gb.direct.joypad = 0xFF;

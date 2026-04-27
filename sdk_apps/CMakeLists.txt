@@ -297,6 +297,8 @@ build_app(sms_launcher PREINSTALL
 build_app(gb_emu PREINSTALL
     SOURCES
      gb_badgevms.c
+    INCLUDE_DIRS
+     ${CMAKE_CURRENT_SOURCE_DIR}/shared
 )
 
 build_app(sms_emu PREINSTALL
@@ -317,6 +319,7 @@ build_app(sms_emu PREINSTALL
      "sms_static_assert=_Static_assert"
     INCLUDE_DIRS
      ${CMAKE_CURRENT_SOURCE_DIR}/sms_emu/core
+     ${CMAKE_CURRENT_SOURCE_DIR}/shared
 )
 
 build_app(nes_emu PREINSTALL
@@ -393,6 +396,7 @@ build_app(nes_emu PREINSTALL
      nofrendo/mappers/map231.c
     INCLUDE_DIRS
      ${CMAKE_CURRENT_SOURCE_DIR}/nes_emu/nofrendo
+     ${CMAKE_CURRENT_SOURCE_DIR}/shared
 )
 
 build_app(random_emu_game PREINSTALL

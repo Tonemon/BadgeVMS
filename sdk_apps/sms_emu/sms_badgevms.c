@@ -1,4 +1,5 @@
 #include "core/sms.h"
+#include "emu_overlay.h"
 
 #include <badgevms/compositor.h>
 #include <badgevms/event.h>
@@ -38,7 +39,7 @@ static uint32_t colour_callback(void *user, uint8_t r, uint8_t g2, uint8_t b) {
 int main(int argc, char **argv) {
     g_win = window_create("SMS Emulator",
                           (window_size_t){720, 720},
-                          WINDOW_FLAG_DOUBLE_BUFFERED | WINDOW_FLAG_FULLSCREEN);
+                          WINDOW_FLAG_DOUBLE_BUFFERED | WINDOW_FLAG_MAXIMIZED);
     g_fb  = window_framebuffer_create(g_win, (window_size_t){SMS_W, SMS_H},
                                       BADGEVMS_PIXELFORMAT_RGB565);
 
@@ -71,6 +72,10 @@ int main(int argc, char **argv) {
 
     SMS_loadrom(&g_sms, rom, (size_t)rom_sz);
     free(rom);
+
+    char label[64];
+    emu_overlay_label(label, sizeof(label), argv[1], "[SMS]");
+    window_title_set(g_win, label);
 
     const size_t cpf = SMS_cycles_per_frame(&g_sms);
 

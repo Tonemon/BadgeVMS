@@ -178,6 +178,12 @@ char **rom_browser_scan(const char *rom_dir, const char **extensions,
     return result;
 }
 
+/* Build title string with ROM count: "NES Launcher - 42 games" */
+static void rb_make_display_title(char *buf, size_t sz, const char *base,
+                                  size_t count) {
+    snprintf(buf, sz, "%s - %zu game%s", base, count, count == 1 ? "" : "s");
+}
+
 /* ------------------------------------------------------------------ */
 /* Public: rom_browser_run                                             */
 /* ------------------------------------------------------------------ */
@@ -205,6 +211,8 @@ char *rom_browser_run(const rom_browser_config_t *cfg) {
     int    selected = 0;
     int    scroll   = 0;
     char  *result   = NULL;
+    char   display_title[128];
+    rb_make_display_title(display_title, sizeof(display_title), cfg->title, count);
 
     while (true) {
         /* Background + panel */
@@ -214,7 +222,7 @@ char *rom_browser_run(const rom_browser_config_t *cfg) {
 
         /* Title bar */
         rb_fill_rect(&ctx, WIN_X + 3, WIN_Y + 3, WIN_W - 6, TITLE_H, CDE_TITLE_BG);
-        rb_draw_text(&ctx, WIN_X + 15, WIN_Y + 11, cfg->title, CDE_SELECTED_TEXT);
+        rb_draw_text(&ctx, WIN_X + 15, WIN_Y + 11, display_title, CDE_SELECTED_TEXT);
 
         /* List area */
         int lx = WIN_X + 15, ly = LIST_Y, lw = WIN_W - 30;
@@ -310,6 +318,7 @@ char *rom_browser_run(const rom_browser_config_t *cfg) {
             roms     = rom_browser_scan(cfg->rom_dir, cfg->extensions, &count);
             selected = 0;
             scroll   = 0;
+            rb_make_display_title(display_title, sizeof(display_title), cfg->title, count);
             continue;
         }
 

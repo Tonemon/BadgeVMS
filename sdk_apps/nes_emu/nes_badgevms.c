@@ -1,6 +1,7 @@
 #include "nofrendo/nofrendo.h"
 #include "nofrendo/nes/nes.h"
 #include "nofrendo/nes/input.h"
+#include "emu_overlay.h"
 
 #include <badgevms/compositor.h>
 #include <badgevms/event.h>
@@ -18,11 +19,11 @@
 #define NES_W NES_SCREEN_WIDTH
 #define NES_H NES_SCREEN_HEIGHT
 
-static window_handle_t g_win     = NULL;
-static framebuffer_t  *g_fb      = NULL;
-static uint16_t       *g_pal565  = NULL;  /* 256-entry RGB565 palette from nofrendo */
+static window_handle_t g_win    = NULL;
+static framebuffer_t  *g_fb     = NULL;
+static uint16_t       *g_pal565 = NULL;
 static uint8_t         g_vidbuf[NES_SCREEN_PITCH * NES_SCREEN_HEIGHT];
-static uint8_t         g_joypad  = 0;
+static uint8_t         g_joypad = 0;
 
 /* ------------------------------------------------------------------ */
 /* Blit callback — called once per NES frame by nofrendo              */
@@ -73,7 +74,7 @@ static void blit_frame(uint8_t *vidbuf) {
 int main(int argc, char **argv) {
     g_win = window_create("NES Emulator",
                           (window_size_t){720, 720},
-                          WINDOW_FLAG_DOUBLE_BUFFERED | WINDOW_FLAG_FULLSCREEN);
+                          WINDOW_FLAG_DOUBLE_BUFFERED | WINDOW_FLAG_MAXIMIZED);
     g_fb  = window_framebuffer_create(g_win, (window_size_t){NES_W, NES_H},
                                       BADGEVMS_PIXELFORMAT_RGB565);
 
@@ -84,6 +85,10 @@ int main(int argc, char **argv) {
         window_destroy(g_win);
         return 1;
     }
+
+    char label[64];
+    emu_overlay_label(label, sizeof(label), argv[1], "[NES]");
+    window_title_set(g_win, label);
 
     nofrendo_init(SYS_NES_NTSC, 0, false, blit_frame, NULL, NULL);
     nes_setvidbuf(g_vidbuf);
