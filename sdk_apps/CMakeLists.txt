@@ -325,8 +325,6 @@ build_app(sms_emu PREINSTALL
     INCLUDE_DIRS
      ${CMAKE_CURRENT_SOURCE_DIR}/sms_emu/core
      ${CMAKE_CURRENT_SOURCE_DIR}/shared
-    EXTRA_FLAGS
-     -O3
 )
 
 build_app(nes_emu PREINSTALL
@@ -403,6 +401,8 @@ build_app(nes_emu PREINSTALL
      nofrendo/mappers/map228.c
      nofrendo/mappers/map229.c
      nofrendo/mappers/map231.c
+    COMPILE_DEFINITIONS
+     NES6502_JUMPTABLE
     INCLUDE_DIRS
      ${CMAKE_CURRENT_SOURCE_DIR}/nes_emu/nofrendo
      ${CMAKE_CURRENT_SOURCE_DIR}/shared
