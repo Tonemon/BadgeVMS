@@ -141,6 +141,7 @@ int main(int argc, char **argv) {
     }
 
     gb_init_lcd(&g_gb, lcd_draw_line);
+    g_gb.direct.frame_skip = true;
 
     char label[64];
     emu_overlay_label(label, sizeof(label), argv[1], "[GB]");
@@ -179,7 +180,9 @@ int main(int argc, char **argv) {
         if (!g_running) break;
 
         gb_run_frame(&g_gb);
-        window_present(g_win, false, NULL, 0);
+        /* Only present on rendered frames (frame_skip_count=false after draw) */
+        if (!g_gb.display.frame_skip_count)
+            window_present(g_win, false, NULL, 0);
     }
 
     write_save();

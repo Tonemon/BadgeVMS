@@ -35,7 +35,7 @@ set(APP_ELF_DIR ${CMAKE_BINARY_DIR}/app_elfs)
 file(MAKE_DIRECTORY ${APP_ELF_DIR})
 
 function(build_app app_name)
-    cmake_parse_arguments(APP "PREINSTALL" "" "SOURCES;LIBRARIES;COMPILE_DEFINITIONS;INCLUDE_DIRS" ${ARGN})
+    cmake_parse_arguments(APP "PREINSTALL" "" "SOURCES;LIBRARIES;COMPILE_DEFINITIONS;INCLUDE_DIRS;EXTRA_FLAGS" ${ARGN})
 
     if(NOT APP_SOURCES)
         message(FATAL_ERROR "build_app: SOURCES must be specified for ${app_name}")
@@ -81,6 +81,7 @@ function(build_app app_name)
         OUTPUT ${APP_ELF_DIR}/${app_name}.elf
         COMMAND ${CMAKE_C_COMPILER}
             ${APP_COMPILE_FLAGS}
+            ${APP_EXTRA_FLAGS}
             ${APP_LINK_FLAGS}
             -isystem${SDK_INCLUDE_DIR}
             -o ${APP_ELF_DIR}/${app_name}.elf
@@ -299,6 +300,10 @@ build_app(gb_emu PREINSTALL
      gb_badgevms.c
     INCLUDE_DIRS
      ${CMAKE_CURRENT_SOURCE_DIR}/shared
+    COMPILE_DEFINITIONS
+     "PEANUT_GB_HIGH_LCD_ACCURACY=0"
+    EXTRA_FLAGS
+     -O3
 )
 
 build_app(sms_emu PREINSTALL
@@ -320,9 +325,13 @@ build_app(sms_emu PREINSTALL
     INCLUDE_DIRS
      ${CMAKE_CURRENT_SOURCE_DIR}/sms_emu/core
      ${CMAKE_CURRENT_SOURCE_DIR}/shared
+    EXTRA_FLAGS
+     -O3
 )
 
 build_app(nes_emu PREINSTALL
+    EXTRA_FLAGS
+     -O3
     SOURCES
      nes_badgevms.c
      nofrendo/nofrendo.c

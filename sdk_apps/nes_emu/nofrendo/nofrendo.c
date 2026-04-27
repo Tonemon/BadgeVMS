@@ -27,8 +27,14 @@
 #include "palettes.h"
 #include "nes/nes.h"
 
-// static bool frameskip;
-static bool running;
+static bool  frameskip;
+static bool  running;
+static void (*s_frame_begin)(void);
+
+void nofrendo_set_frame_begin(void (*fn)(void))
+{
+    s_frame_begin = fn;
+}
 
 int nofrendo_init(int system, int sample_rate, bool stereo, void *blit, void *vsync, void *input)
 {
@@ -114,10 +120,14 @@ int nofrendo_start(const char *filename, const char *savefile)
     }
 
     running = true;
+    frameskip = false;
 
     while (running)
     {
-        nes_emulate(true);
+        if (s_frame_begin)
+            s_frame_begin();
+        nes_emulate(!frameskip);
+        frameskip = !frameskip;
     }
 
     nes_shutdown();

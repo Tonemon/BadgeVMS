@@ -26,10 +26,9 @@ static uint8_t         g_vidbuf[NES_SCREEN_PITCH * NES_SCREEN_HEIGHT];
 static uint8_t         g_joypad = 0;
 
 /* ------------------------------------------------------------------ */
-/* Blit callback — called once per NES frame by nofrendo              */
+/* Input callback — called every NES frame (draw and skip)            */
 /* ------------------------------------------------------------------ */
-static void blit_frame(uint8_t *vidbuf) {
-    /* Poll all pending events */
+static void input_frame(void) {
     event_t e;
     do {
         e = window_event_poll(g_win, false, 0);
@@ -56,7 +55,12 @@ static void blit_frame(uint8_t *vidbuf) {
     } while (e.type != EVENT_NONE);
 
     input_update(0, g_joypad);
+}
 
+/* ------------------------------------------------------------------ */
+/* Blit callback — called on rendered frames only (2:1 frame skip)    */
+/* ------------------------------------------------------------------ */
+static void blit_frame(uint8_t *vidbuf) {
     /* Convert indexed vidbuf → RGB565 into the framebuffer, skipping overdraw */
     uint16_t *dst = g_fb->pixels;
     for (int y = 0; y < NES_H; y++) {
@@ -91,6 +95,7 @@ int main(int argc, char **argv) {
     window_title_set(g_win, label);
 
     nofrendo_init(SYS_NES_NTSC, 0, false, blit_frame, NULL, NULL);
+    nofrendo_set_frame_begin(input_frame);
     nes_setvidbuf(g_vidbuf);
 
     /* Build RGB565 palette (256 entries) */
