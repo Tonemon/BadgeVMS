@@ -209,11 +209,25 @@ char *rom_browser_run(const rom_browser_config_t *cfg) {
         rb_draw_3d_border(&ctx, lx, ly, lw, LIST_H, 1);
 
         if (count == 0) {
-            char msg[128];
-            snprintf(msg, sizeof(msg),
-                     "No ROMs found. Copy files to %s", cfg->rom_dir);
-            rb_draw_text_centered(&ctx, lx, ly + LIST_H / 2 - FONT_HEIGHT / 2,
-                                  lw, msg, CDE_INACTIVE_TEXT);
+            /* Convert VMS rom_dir (SD0:[ROMS.NES]) to SD-card path (ROMS/NES/) for display */
+            char sd_path[64] = "";
+            const char *bracket = strchr(cfg->rom_dir, '[');
+            if (bracket) {
+                size_t i = 0, j = 1;
+                while (bracket[j] && bracket[j] != ']' && i < sizeof(sd_path) - 2) {
+                    sd_path[i++] = (bracket[j] == '.') ? '/' : bracket[j];
+                    j++;
+                }
+                sd_path[i++] = '/';
+                sd_path[i]   = '\0';
+            }
+            char msg1[64], msg2[64];
+            snprintf(msg1, sizeof(msg1), "No ROMs found.");
+            snprintf(msg2, sizeof(msg2), "Copy files to SD card: %s",
+                     sd_path[0] ? sd_path : cfg->rom_dir);
+            int mid = ly + LIST_H / 2;
+            rb_draw_text_centered(&ctx, lx, mid - FONT_HEIGHT - 2, lw, msg1, CDE_INACTIVE_TEXT);
+            rb_draw_text_centered(&ctx, lx, mid + 2,               lw, msg2, CDE_INACTIVE_TEXT);
         } else {
             int vis_end = scroll + PER_PAGE;
             if (vis_end > (int)count) vis_end = (int)count;
@@ -258,7 +272,7 @@ char *rom_browser_run(const rom_browser_config_t *cfg) {
         rb_draw_3d_border(&ctx, WIN_X + 3, WIN_Y + WIN_H - FOOTER_H,
                           WIN_W - 6, FOOTER_H - 3, 1);
         rb_draw_text(&ctx, WIN_X + 15, WIN_Y + WIN_H - FOOTER_H + 9,
-                     "UP/DOWN: Navigate  ENTER: Launch  ESC: Back",
+                     "UP/DOWN: Navigate  ENTER: Launch  R: Reload  ESC: Back",
                      CDE_TEXT_COLOR);
 
         window_present(cfg->window, true, NULL, 0);
@@ -275,6 +289,15 @@ char *rom_browser_run(const rom_browser_config_t *cfg) {
             result = roms[selected];
             roms[selected] = NULL;
             break;
+        }
+
+        if (sc == KEY_SCANCODE_R) {
+            for (size_t i = 0; i < count; i++) free(roms[i]);
+            free(roms);
+            roms     = rom_browser_scan(cfg->rom_dir, cfg->extensions, &count);
+            selected = 0;
+            scroll   = 0;
+            continue;
         }
 
         if ((sc == KEY_SCANCODE_UP || sc == KEY_SCANCODE_W) && selected > 0) {

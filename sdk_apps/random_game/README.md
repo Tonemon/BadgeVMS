@@ -25,16 +25,19 @@ ROMs must be in the following directories on the SD card:
 
 ```
 SD card root/
-├── ROMS.NES/
-│   ├── Super Mario Bros.nes
-│   └── ...
-├── ROMS.GB/
-│   ├── Tetris.gb
-│   ├── Pokemon Red.gb
-│   └── ...
-└── ROMS.SMS/
-    ├── Sonic the Hedgehog.sms
-    └── ...
+└── ROMS/
+    ├── NES/
+    │   ├── Super Mario Bros.nes
+    │   └── ...
+    ├── GB/
+    │   ├── Tetris.gb
+    │   ├── Pokemon Red.gb
+    │   └── ...
+    └── SMS/
+        ├── Sonic the Hedgehog.sms
+        └── ...
 ```
+
+> VMS paths use dot as a directory separator: `SD0:[ROMS.NES]` → `ROMS/NES/` on the SD card.
 
 Any combination of systems works — if only one system has ROMs, it always picks from that one. Systems with no ROMs are excluded from the random draw.
