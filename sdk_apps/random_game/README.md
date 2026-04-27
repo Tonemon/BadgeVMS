@@ -40,4 +40,6 @@ SD card root/
 
 > VMS paths use dot as a directory separator: `SD0:[ROMS.NES]` → `ROMS/NES/` on the SD card.
 
+> **Filename restriction:** filenames must only contain letters, digits, hyphens `-`, underscores `_`, and dots `.`. Files with spaces, parentheses, brackets, `!`, or other special characters are skipped.
+
 Any combination of systems works — if only one system has ROMs, it always picks from that one. Systems with no ROMs are excluded from the random draw.

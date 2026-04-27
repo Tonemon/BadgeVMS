@@ -31,3 +31,6 @@ SD card root/
 
 > The VMS path `SD0:[ROMS.NES]` maps to `ROMS/NES/` on the SD card — the dot is a directory separator in VMS notation.
 > Files are listed alphabetically. The launcher ignores subdirectories.
+
+> **Filename restriction:** the VMS filesystem only supports letters, digits, hyphens `-`, underscores `_`, and dots `.` in filenames. Files with spaces, parentheses `()`, brackets `[]`, `!`, or any other special character are silently skipped by the launcher.
+> Rename: `Super Mario Bros. 2 (USA).nes` → `Super Mario Bros. 2 USA.nes`

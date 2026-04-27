@@ -33,4 +33,7 @@ SD card root/
 > The VMS path `SD0:[ROMS.GB]` maps to `ROMS/GB/` on the SD card — the dot is a directory separator in VMS notation.
 > Both `.gb` and `.gbc` extensions are listed together, sorted alphabetically.
 
+> **Filename restriction:** the VMS filesystem only supports letters, digits, hyphens `-`, underscores `_`, and dots `.` in filenames. Files with spaces, parentheses `()`, brackets `[]`, `!`, or any other special character are silently skipped by the launcher.
+> Rename: `Pokemon Red (USA).gb` → `Pokemon Red USA.gb`
+
 Note: only original DMG (Game Boy) games are supported in this release — GBC colour mode is not yet implemented.

@@ -33,4 +33,7 @@ SD card root/
 > The VMS path `SD0:[ROMS.SMS]` maps to `ROMS/SMS/` on the SD card — the dot is a directory separator in VMS notation.
 > Both `.sms` and `.bin` extensions are listed together, sorted alphabetically.
 
+> **Filename restriction:** the VMS filesystem only supports letters, digits, hyphens `-`, underscores `_`, and dots `.` in filenames. Files with spaces, parentheses `()`, brackets `[]`, `!`, or any other special character are silently skipped by the launcher.
+> Rename: `Sonic the Hedgehog (USA).sms` → `Sonic the Hedgehog USA.sms`
+
 Note: only Sega Master System ROMs are supported. Game Gear ROMs are not supported in this release.

@@ -116,6 +116,18 @@ static bool ext_matches(const char *name, const char **exts) {
     return false;
 }
 
+/* VMS path chars: A-Z a-z 0-9 - _ $ .  (no spaces, parens, brackets, !) */
+static bool filename_is_vms_safe(const char *name) {
+    for (const char *p = name; *p; p++) {
+        char c = *p;
+        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+              (c >= '0' && c <= '9') || c == '-' || c == '_' ||
+              c == '$' || c == '.'))
+            return false;
+    }
+    return true;
+}
+
 /* qsort comparator — sorts by filename only (after last ']') */
 static int cmp_rom_paths(const void *a, const void *b) {
     const char *pa = *(const char **)a;
@@ -140,6 +152,7 @@ char **rom_browser_scan(const char *rom_dir, const char **extensions,
     struct dirent *ent;
     while ((ent = readdir(d)) != NULL) {
         if (!ext_matches(ent->d_name, extensions)) continue;
+        if (!filename_is_vms_safe(ent->d_name)) continue;
 
         size_t dir_len  = strlen(rom_dir);
         size_t name_len = strlen(ent->d_name);
