@@ -200,7 +200,6 @@ void nes_reset(bool hard_reset)
     input_reset();
     nes6502_reset();
 
-    nes.vidbuf = NULL;
     nes.scanline = 241;
     nes.cycles = 0;
 
