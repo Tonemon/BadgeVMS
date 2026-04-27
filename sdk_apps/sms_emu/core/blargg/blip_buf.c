@@ -34,9 +34,15 @@ SOFTWARE.
 	#include "blargg_test.h"
 #endif
 
+/* On rv32, the badge ELF loader provides __fixunsdfsi (double→uint32) but
+   not __fixunsdfdi (double→uint64), so force 32-bit fixed_t here. */
+#if defined(__riscv) && __riscv_xlen == 32
+	typedef unsigned fixed_t;
+	enum { pre_shift = 0 };
+
 /* Equivalent to ULONG_MAX >= 0xFFFFFFFF00000000.
 Avoids constants that don't fit in 32 bits. */
-#if ULONG_MAX/0xFFFFFFFF > 0xFFFFFFFF
+#elif ULONG_MAX/0xFFFFFFFF > 0xFFFFFFFF
 	typedef unsigned long fixed_t;
 	enum { pre_shift = 32 };
 

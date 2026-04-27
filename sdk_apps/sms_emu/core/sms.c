@@ -695,14 +695,11 @@ void SMS_set_input_callback(struct SMS_Core* sms, sms_input_callback_t cb)
 
 bool SMS_parity8(uint8_t value)
 {
-    #if HAS_BUILTIN(__builtin_parity)
-        return !__builtin_parity(value);
-    #else
-        // SOURCE: https://graphics.stanford.edu/~seander/bithacks.html#ParityParallel
-        value ^= value >> 4; // 8-bit
-        value &= 0xF;
-        return !((0x6996 >> value) & 0x1);
-    #endif
+    /* __builtin_parity generates a __paritysi2 libgcc call on rv32imafc
+       which the badge ELF loader can't resolve — use the manual path. */
+    value ^= value >> 4; // 8-bit
+    value &= 0xF;
+    return !((0x6996 >> value) & 0x1);
 }
 
 void SMS_run(struct SMS_Core* sms, int cycles)

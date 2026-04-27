@@ -116,15 +116,14 @@ static inline void add_delta_fast(Sn76489* psg, struct Sn76489Channel* c, unsign
 
 static inline bool parity(unsigned value)
 {
-    #if defined(__has_builtin) && __has_builtin(__builtin_parity)
-        return !__builtin_parity(value);
-    #else
-        value ^= value>>8;
-        value ^= value>>4;
-        value ^= value>>2;
-        value ^= value>>1;
-        return value & 1;
-    #endif
+    /* __builtin_parity generates a __paritysi2 libgcc call on rv32imafc
+       which the badge ELF loader can't resolve — use the manual path.
+       Return 1 for even parity to match !__builtin_parity. */
+    value ^= value>>8;
+    value ^= value>>4;
+    value ^= value>>2;
+    value ^= value>>1;
+    return !(value & 1);
 }
 
 static inline unsigned channel_get_freq(const Sn76489* psg, int num)
