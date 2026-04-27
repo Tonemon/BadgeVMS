@@ -1,7 +1,7 @@
 {
-    "uid": "gb_emu",
+    "unique_identifier": "gb_emu",
     "name": "Game Boy Emulator",
-    "author": "BadgeVMS Contributors",
+    "author": "ThatOneGuy",
     "version": "0.1.0",
     "binary_path": "gb_emu.elf"
 }

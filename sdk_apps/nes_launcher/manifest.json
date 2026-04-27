@@ -1,7 +1,7 @@
 {
-    "uid": "nes_launcher",
+    "unique_identifier": "nes_launcher",
     "name": "NES Launcher",
-    "author": "BadgeVMS Contributors",
+    "author": "ThatOneGuy",
     "version": "0.1.0",
     "binary_path": "nes_launcher.elf"
 }

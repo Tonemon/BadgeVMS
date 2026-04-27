@@ -1,7 +1,7 @@
 {
-    "uid": "random_game",
+    "unique_identifier": "random_game",
     "name": "Start Random Game",
-    "author": "BadgeVMS Contributors",
+    "author": "ThatOneGuy",
     "version": "0.1.0",
     "binary_path": "random_game.elf"
 }
