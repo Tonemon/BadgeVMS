@@ -3,5 +3,6 @@
     "name": "SMS Emulator",
     "author": "ThatOneGuy",
     "version": "0.1.0",
-    "binary_path": "sms_emu.elf"
+    "binary_path": "sms_emu.elf",
+    "hidden": true
 }

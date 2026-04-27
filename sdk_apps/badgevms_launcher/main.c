@@ -59,6 +59,28 @@ static atomic_bool     g_scan_done  = false;
 static application_t **g_scan_apps  = NULL;
 static size_t          g_scan_count = 0;
 
+static bool app_is_hidden(const char *uid) {
+    char path[128];
+    snprintf(path, sizeof(path), "APPS:%s.json", uid);
+    FILE *f = fopen(path, "r");
+    if (!f) return false;
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    rewind(f);
+    char *buf = malloc((size_t)sz + 1);
+    if (!buf) { fclose(f); return false; }
+    fread(buf, 1, (size_t)sz, f);
+    buf[sz] = '\0';
+    fclose(f);
+    cJSON *json = cJSON_Parse(buf);
+    free(buf);
+    if (!json) return false;
+    cJSON *hidden = cJSON_GetObjectItem(json, "hidden");
+    bool result = cJSON_IsTrue(hidden);
+    cJSON_Delete(json);
+    return result;
+}
+
 static void scan_thread(void *unused) {
     (void)unused;
 
@@ -79,7 +101,8 @@ static void scan_thread(void *unused) {
         if (app->binary_path && strlen(app->binary_path) &&
             app->unique_identifier &&
             strcmp(app->unique_identifier, "badgevms_launcher")        != 0 &&
-            strcmp(app->unique_identifier, "why2025_firmware_ota_c6") != 0) {
+            strcmp(app->unique_identifier, "why2025_firmware_ota_c6") != 0 &&
+            !app_is_hidden(app->unique_identifier)) {
             application_t **tmp = realloc(apps, sizeof(application_t *) * (count + 1));
             if (!tmp) {
                 printf("Scan thread: OOM, stopping after %zu apps\n", count);

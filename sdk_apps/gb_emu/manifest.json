@@ -3,5 +3,6 @@
     "name": "Game Boy Emulator",
     "author": "ThatOneGuy",
     "version": "0.1.0",
-    "binary_path": "gb_emu.elf"
+    "binary_path": "gb_emu.elf",
+    "hidden": true
 }
