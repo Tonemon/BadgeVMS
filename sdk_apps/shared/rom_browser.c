@@ -313,16 +313,26 @@ char *rom_browser_run(const rom_browser_config_t *cfg) {
             continue;
         }
 
-        if ((sc == KEY_SCANCODE_UP || sc == KEY_SCANCODE_W) && selected > 0) {
-            selected--;
-            if (selected < scroll) scroll = selected;
+        if ((sc == KEY_SCANCODE_UP || sc == KEY_SCANCODE_W) && count > 0) {
+            if (selected == 0) {
+                selected = (int)count - 1;
+                scroll   = selected - PER_PAGE + 1;
+                if (scroll < 0) scroll = 0;
+            } else {
+                selected--;
+                if (selected < scroll) scroll = selected;
+            }
         }
 
-        if ((sc == KEY_SCANCODE_DOWN || sc == KEY_SCANCODE_S) &&
-            count > 0 && selected < (int)count - 1) {
-            selected++;
-            if (selected >= scroll + PER_PAGE)
-                scroll = selected - PER_PAGE + 1;
+        if ((sc == KEY_SCANCODE_DOWN || sc == KEY_SCANCODE_S) && count > 0) {
+            if (selected == (int)count - 1) {
+                selected = 0;
+                scroll   = 0;
+            } else {
+                selected++;
+                if (selected >= scroll + PER_PAGE)
+                    scroll = selected - PER_PAGE + 1;
+            }
         }
     }
 
