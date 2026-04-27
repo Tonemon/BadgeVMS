@@ -1,4 +1,4 @@
-# Start Random Game
+# Start Random Emulator Game
 
 Picks a random ROM from the SD card across all supported systems and launches the appropriate emulator.
 

@@ -1,7 +1,0 @@
-{
-    "unique_identifier": "random_game",
-    "name": "Start Random Game",
-    "author": "ThatOneGuy",
-    "version": "1",
-    "binary_path": "random_game.elf"
-}
