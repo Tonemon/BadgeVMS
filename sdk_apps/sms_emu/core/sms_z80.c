@@ -1873,7 +1873,13 @@ static FORCE_INLINE void execute_ED(struct SMS_Core* sms)
     }
 }
 
+#ifdef SMS_JUMPTABLE
+/* Cannot be always_inline with a static &&label table — GCC would refuse to
+   copy the function because the static would point to the wrong labels. */
+static void execute(struct SMS_Core* sms)
+#else
 static FORCE_INLINE void execute(struct SMS_Core* sms)
+#endif
 {
     const uint8_t opcode = read8(REG_PC++);
     sms->cpu.cycles += CYC_00[opcode];
