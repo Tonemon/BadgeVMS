@@ -1,0 +1,7 @@
+{
+    "unique_identifier": "sms_launcher",
+    "name": "Sega Master System Launcher",
+    "author": "ThatOneGuy",
+    "version": "1",
+    "binary_path": "sms_launcher.elf"
+}

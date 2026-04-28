@@ -1,0 +1,7 @@
+{
+    "unique_identifier": "gb_launcher",
+    "name": "Game Boy Launcher",
+    "author": "ThatOneGuy",
+    "version": "1",
+    "binary_path": "gb_launcher.elf"
+}

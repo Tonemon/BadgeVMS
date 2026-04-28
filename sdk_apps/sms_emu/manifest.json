@@ -1,0 +1,8 @@
+{
+    "unique_identifier": "sms_emu",
+    "name": "SMS Emulator",
+    "author": "ThatOneGuy",
+    "version": "1",
+    "binary_path": "sms_emu.elf",
+    "hidden": true
+}
