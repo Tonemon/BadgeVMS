@@ -162,6 +162,40 @@ Add a `"hidden": true` field to `manifest.json`. The launcher's scan thread skip
 
 ---
 
+## Performance Notes and Hardware Ceiling
+
+### Observed frame rates (after optimisation)
+
+| System | Approximate fps |
+|--------|----------------|
+| NES | ~3–4 fps |
+| GB / GBC | ~3–4 fps |
+| SMS | ~8–10 fps |
+
+### Optimisations applied
+
+- **`-O3`** on all three emulator targets.
+- **Computed-goto dispatch tables** (`NES6502_JUMPTABLE`, `SMS_JUMPTABLE`): 256-entry `&&label` tables replace the binary-search switch chains forced by `-fno-jump-tables`. Reduces per-opcode dispatch from O(log 256) ≈ 7 comparisons to O(1).
+- **`NDEBUG`** on all three targets: eliminates `assert()` calls in hot loops (notably the per-opcode assertion in the Z80 executor).
+- **`psg_skip_frame()`**: replaces full 4-channel PSG synthesis with a clock reset when audio output is disabled, saving ~10–20% of per-frame CPU on SMS.
+- **SMS frame skip removed**: the 2:1 frame skip previously only skipped `window_present` while still running the full VDP every frame, doubling VDP work per displayed frame for no benefit.
+- **NES 2:1 frame skip kept**: `nes_emulate(bool draw)` passes `draw` to `ppu_renderline`, so the PPU actually skips pixel writes on skip frames. The NES PPU is a significant fraction of per-frame cost.
+- **GB `direct.frame_skip`**: peanut-gb skips the LCD scanline callback on alternate frames; kept enabled.
+
+### Hard ceiling: SPIRAM latency on in-order rv32
+
+ELF apps run entirely from SPIRAM. The ESP32-P4 provides a 256 KB L2 cache, but each cache miss costs roughly 70–150 cycles on the in-order rv32 core. Emulator working sets (Z80/6502 execute loops + ROM banking windows + framebuffer) do not fit in 256 KB, so sustained miss rates are unavoidable.
+
+The practical ceiling for any of these emulators under the current ELF loader architecture is approximately **15–20 fps**. Reaching 30+ fps would require placing hot code and data in internal SRAM, which is not possible without changes to the ELF loader to support a separate fast-memory mapping region.
+
+Specific limitations that cannot be optimised away at the application level:
+
+- `R_RISCV_PCREL_*` relocations are not supported by the badge ELF loader; `-fno-jump-tables` is required globally, turning every switch into a binary-search chain.
+- libgcc functions not present in the runtime symbol table (e.g. `__paritysi2`, `__fixunsdfdi`) cannot be called even via LTO stubs due to LTRANS partition visibility rules; any code path that would emit them must be rewritten.
+- SPIRAM bandwidth is shared with the display pipeline; heavy framebuffer writes compete with code fetch.
+
+---
+
 ## Out of Scope (this release)
 
 - Audio.

@@ -302,6 +302,7 @@ build_app(gb_emu PREINSTALL
      ${CMAKE_CURRENT_SOURCE_DIR}/shared
     COMPILE_DEFINITIONS
      "PEANUT_GB_HIGH_LCD_ACCURACY=0"
+     NDEBUG
     EXTRA_FLAGS
      -O3
 )
@@ -323,6 +324,7 @@ build_app(sms_emu PREINSTALL
     COMPILE_DEFINITIONS
      "sms_static_assert=_Static_assert"
      SMS_JUMPTABLE
+     NDEBUG
     INCLUDE_DIRS
      ${CMAKE_CURRENT_SOURCE_DIR}/sms_emu/core
      ${CMAKE_CURRENT_SOURCE_DIR}/shared
@@ -406,6 +408,7 @@ build_app(nes_emu PREINSTALL
      nofrendo/mappers/map231.c
     COMPILE_DEFINITIONS
      NES6502_JUMPTABLE
+     NDEBUG
     INCLUDE_DIRS
      ${CMAKE_CURRENT_SOURCE_DIR}/nes_emu/nofrendo
      ${CMAKE_CURRENT_SOURCE_DIR}/shared
