@@ -148,11 +148,18 @@ typedef struct {
     int   text_input_cursor;
     char *text_input_dest;   /* points into badge_owner_name or hostname */
     int   text_input_max_len;
+
+    /* Hidden network connection */
+    bool show_hidden_ssid_dialog;
+    char hidden_ssid[64];
+    int  hidden_ssid_cursor;
+    bool is_hidden_connection;
 } app_context;
 
 static void render_screen(app_context *ctx);
 static void app_chooser_close(app_context *ctx);
 static void draw_text_input_dialog(app_context *ctx);
+static void draw_hidden_ssid_dialog(app_context *ctx);
 
 static inline uint16_t rgb888_to_rgb565_color(uint32_t rgb888) {
     uint8_t r = (rgb888 >> 16) & 0xFF;
