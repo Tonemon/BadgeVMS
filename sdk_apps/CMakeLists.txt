@@ -138,6 +138,12 @@ endfunction()
 file(READ "${CMAKE_SOURCE_DIR}/version.txt" _BADGEVMS_VERSION_RAW)
 string(STRIP "${_BADGEVMS_VERSION_RAW}" BADGEVMS_VERSION)
 
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/badgevms_launcher/manifest.json" _LAUNCHER_MANIFEST)
+string(JSON LAUNCHER_APP_VERSION GET "${_LAUNCHER_MANIFEST}" "version")
+
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/badgevms_settings/manifest.json" _SETTINGS_MANIFEST)
+string(JSON SETTINGS_APP_VERSION GET "${_SETTINGS_MANIFEST}" "version")
+
 # Old OTA updater preinstalled at handout, doesn't build anymore due to api changes
 #build_app(ota_wifi_update
 #    SOURCES
@@ -163,6 +169,8 @@ build_app(badgevms_launcher PREINSTALL
      cJSON.c
     COMPILE_DEFINITIONS
      "BADGEVMS_VERSION=${BADGEVMS_VERSION}"
+     "LAUNCHER_APP_VERSION=\"${LAUNCHER_APP_VERSION}\""
+     "SETTINGS_APP_VERSION=\"${SETTINGS_APP_VERSION}\""
 )
 
 build_app(badgevms_settings PREINSTALL

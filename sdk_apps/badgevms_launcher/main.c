@@ -391,7 +391,7 @@ static uint16_t *get_app_icon(Launcher_Context *ctx, const char *uid) {
 
 static void draw_about_dialog(Launcher_Context *ctx) {
     int dialog_w = 450;
-    int dialog_h = 350;
+    int dialog_h = 390;
     int dialog_x = (SCREEN_WIDTH - dialog_w) / 2;
     int dialog_y = (SCREEN_HEIGHT - dialog_h) / 2;
 
@@ -418,7 +418,10 @@ static void draw_about_dialog(Launcher_Context *ctx) {
         CDE_INACTIVE_TEXT
     );
 
-    draw_text_centered(ctx, dialog_x, content_y + 120, dialog_w, "Press ENTER or ESC to close", CDE_INACTIVE_TEXT);
+    draw_text_centered(ctx, dialog_x, content_y + 95, dialog_w, "Launcher v" LAUNCHER_APP_VERSION, CDE_TEXT_COLOR);
+    draw_text_centered(ctx, dialog_x, content_y + 115, dialog_w, "Settings v" SETTINGS_APP_VERSION, CDE_TEXT_COLOR);
+
+    draw_text_centered(ctx, dialog_x, content_y + 155, dialog_w, "Press ENTER or ESC to close", CDE_INACTIVE_TEXT);
 }
 
 static void draw_launcher_window(Launcher_Context *ctx) {
