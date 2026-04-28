@@ -17,9 +17,10 @@
 #define SMS_H 192
 
 static struct SMS_Core  g_sms;
-static window_handle_t  g_win    = NULL;
-static framebuffer_t   *g_fb     = NULL;
-static bool             g_running = true;
+static window_handle_t  g_win      = NULL;
+static framebuffer_t   *g_fb       = NULL;
+static bool             g_running  = true;
+static bool             g_skip_present = false;
 
 /* ------------------------------------------------------------------ */
 /* Colour callback: r,g,b are 2-bit SMS channels (0-3); return RGB565 */
@@ -66,6 +67,7 @@ int main(int argc, char **argv) {
     SMS_set_system_type(&g_sms, SMS_System_SMS);
     SMS_set_colour_callback(&g_sms, colour_callback);
     SMS_set_userdata(&g_sms, NULL);
+    SMS_skip_audio(&g_sms, true);
 
     /* stride = pixels per row (units of uint16_t when bpp=16) */
     SMS_set_pixels(&g_sms, g_fb->pixels, SMS_W, 16);
@@ -108,7 +110,9 @@ int main(int argc, char **argv) {
         if (!g_running) break;
 
         SMS_run(&g_sms, (int)cpf);
-        window_present(g_win, false, NULL, 0);
+        g_skip_present = !g_skip_present;
+        if (!g_skip_present)
+            window_present(g_win, false, NULL, 0);
     }
 
     window_destroy(g_win);

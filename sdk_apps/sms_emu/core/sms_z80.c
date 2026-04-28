@@ -1878,6 +1878,179 @@ static FORCE_INLINE void execute(struct SMS_Core* sms)
     const uint8_t opcode = read8(REG_PC++);
     sms->cpu.cycles += CYC_00[opcode];
 
+#ifdef SMS_JUMPTABLE
+    /* Computed-goto dispatch: generates R_RISCV_RELATIVE relocations which
+       the badge ELF loader supports, avoiding the binary-search chain that
+       -fno-jump-tables produces for a 256-case switch. */
+    static const void *const main_table[256] = {
+        /* 0x00 */ &&L_NOP,    /* 0x01 */ &&L_LD16,    /* 0x02 */ &&L_LD_BC_A, /* 0x03 */ &&L_INC_r16,
+        /* 0x04 */ &&L_INC_r8, /* 0x05 */ &&L_DEC_r8,  /* 0x06 */ &&L_LD_r_u8, /* 0x07 */ &&L_RLCA,
+        /* 0x08 */ &&L_EX_AF,  /* 0x09 */ &&L_ADD_HL,  /* 0x0A */ &&L_LD_A_BC, /* 0x0B */ &&L_DEC_r16,
+        /* 0x0C */ &&L_INC_r8, /* 0x0D */ &&L_DEC_r8,  /* 0x0E */ &&L_LD_r_u8, /* 0x0F */ &&L_RRCA,
+        /* 0x10 */ &&L_DJNZ,   /* 0x11 */ &&L_LD16,    /* 0x12 */ &&L_LD_DE_A, /* 0x13 */ &&L_INC_r16,
+        /* 0x14 */ &&L_INC_r8, /* 0x15 */ &&L_DEC_r8,  /* 0x16 */ &&L_LD_r_u8, /* 0x17 */ &&L_RLA,
+        /* 0x18 */ &&L_JR,     /* 0x19 */ &&L_ADD_HL,  /* 0x1A */ &&L_LD_A_DE, /* 0x1B */ &&L_DEC_r16,
+        /* 0x1C */ &&L_INC_r8, /* 0x1D */ &&L_DEC_r8,  /* 0x1E */ &&L_LD_r_u8, /* 0x1F */ &&L_RRA,
+        /* 0x20 */ &&L_JR_NZ,  /* 0x21 */ &&L_LD16,    /* 0x22 */ &&L_LD_IHL,  /* 0x23 */ &&L_INC_r16,
+        /* 0x24 */ &&L_INC_r8, /* 0x25 */ &&L_DEC_r8,  /* 0x26 */ &&L_LD_r_u8, /* 0x27 */ &&L_DAA,
+        /* 0x28 */ &&L_JR_Z,   /* 0x29 */ &&L_ADD_HL,  /* 0x2A */ &&L_LD_HLI,  /* 0x2B */ &&L_DEC_r16,
+        /* 0x2C */ &&L_INC_r8, /* 0x2D */ &&L_DEC_r8,  /* 0x2E */ &&L_LD_r_u8, /* 0x2F */ &&L_CPL,
+        /* 0x30 */ &&L_JR_NC,  /* 0x31 */ &&L_LD16,    /* 0x32 */ &&L_LD_IA,   /* 0x33 */ &&L_INC_r16,
+        /* 0x34 */ &&L_INC_r8, /* 0x35 */ &&L_DEC_r8,  /* 0x36 */ &&L_LD_r_u8, /* 0x37 */ &&L_SCF,
+        /* 0x38 */ &&L_JR_C,   /* 0x39 */ &&L_ADD_HL,  /* 0x3A */ &&L_LD_AI,   /* 0x3B */ &&L_DEC_r16,
+        /* 0x3C */ &&L_INC_r8, /* 0x3D */ &&L_DEC_r8,  /* 0x3E */ &&L_LD_r_u8, /* 0x3F */ &&L_CCF,
+        /* 0x40 */ &&L_NOP,    /* 0x41 */ &&L_LD_rr,   /* 0x42 */ &&L_LD_rr,   /* 0x43 */ &&L_LD_rr,
+        /* 0x44 */ &&L_LD_rr,  /* 0x45 */ &&L_LD_rr,   /* 0x46 */ &&L_LD_rr,   /* 0x47 */ &&L_LD_rr,
+        /* 0x48 */ &&L_LD_rr,  /* 0x49 */ &&L_NOP,     /* 0x4A */ &&L_LD_rr,   /* 0x4B */ &&L_LD_rr,
+        /* 0x4C */ &&L_LD_rr,  /* 0x4D */ &&L_LD_rr,   /* 0x4E */ &&L_LD_rr,   /* 0x4F */ &&L_LD_rr,
+        /* 0x50 */ &&L_LD_rr,  /* 0x51 */ &&L_LD_rr,   /* 0x52 */ &&L_NOP,     /* 0x53 */ &&L_LD_rr,
+        /* 0x54 */ &&L_LD_rr,  /* 0x55 */ &&L_LD_rr,   /* 0x56 */ &&L_LD_rr,   /* 0x57 */ &&L_LD_rr,
+        /* 0x58 */ &&L_LD_rr,  /* 0x59 */ &&L_LD_rr,   /* 0x5A */ &&L_LD_rr,   /* 0x5B */ &&L_NOP,
+        /* 0x5C */ &&L_LD_rr,  /* 0x5D */ &&L_LD_rr,   /* 0x5E */ &&L_LD_rr,   /* 0x5F */ &&L_LD_rr,
+        /* 0x60 */ &&L_LD_rr,  /* 0x61 */ &&L_LD_rr,   /* 0x62 */ &&L_LD_rr,   /* 0x63 */ &&L_LD_rr,
+        /* 0x64 */ &&L_NOP,    /* 0x65 */ &&L_LD_rr,   /* 0x66 */ &&L_LD_rr,   /* 0x67 */ &&L_LD_rr,
+        /* 0x68 */ &&L_LD_rr,  /* 0x69 */ &&L_LD_rr,   /* 0x6A */ &&L_LD_rr,   /* 0x6B */ &&L_LD_rr,
+        /* 0x6C */ &&L_LD_rr,  /* 0x6D */ &&L_NOP,     /* 0x6E */ &&L_LD_rr,   /* 0x6F */ &&L_LD_rr,
+        /* 0x70 */ &&L_LD_rr,  /* 0x71 */ &&L_LD_rr,   /* 0x72 */ &&L_LD_rr,   /* 0x73 */ &&L_LD_rr,
+        /* 0x74 */ &&L_LD_rr,  /* 0x75 */ &&L_LD_rr,   /* 0x76 */ &&L_HALT,    /* 0x77 */ &&L_LD_rr,
+        /* 0x78 */ &&L_LD_rr,  /* 0x79 */ &&L_LD_rr,   /* 0x7A */ &&L_LD_rr,   /* 0x7B */ &&L_LD_rr,
+        /* 0x7C */ &&L_LD_rr,  /* 0x7D */ &&L_LD_rr,   /* 0x7E */ &&L_LD_rr,   /* 0x7F */ &&L_NOP,
+        /* 0x80 */ &&L_ADD_r,  /* 0x81 */ &&L_ADD_r,   /* 0x82 */ &&L_ADD_r,   /* 0x83 */ &&L_ADD_r,
+        /* 0x84 */ &&L_ADD_r,  /* 0x85 */ &&L_ADD_r,   /* 0x86 */ &&L_ADD_r,   /* 0x87 */ &&L_ADD_r,
+        /* 0x88 */ &&L_ADC_r,  /* 0x89 */ &&L_ADC_r,   /* 0x8A */ &&L_ADC_r,   /* 0x8B */ &&L_ADC_r,
+        /* 0x8C */ &&L_ADC_r,  /* 0x8D */ &&L_ADC_r,   /* 0x8E */ &&L_ADC_r,   /* 0x8F */ &&L_ADC_r,
+        /* 0x90 */ &&L_SUB_r,  /* 0x91 */ &&L_SUB_r,   /* 0x92 */ &&L_SUB_r,   /* 0x93 */ &&L_SUB_r,
+        /* 0x94 */ &&L_SUB_r,  /* 0x95 */ &&L_SUB_r,   /* 0x96 */ &&L_SUB_r,   /* 0x97 */ &&L_SUB_r,
+        /* 0x98 */ &&L_SBC_r,  /* 0x99 */ &&L_SBC_r,   /* 0x9A */ &&L_SBC_r,   /* 0x9B */ &&L_SBC_r,
+        /* 0x9C */ &&L_SBC_r,  /* 0x9D */ &&L_SBC_r,   /* 0x9E */ &&L_SBC_r,   /* 0x9F */ &&L_SBC_r,
+        /* 0xA0 */ &&L_AND_r,  /* 0xA1 */ &&L_AND_r,   /* 0xA2 */ &&L_AND_r,   /* 0xA3 */ &&L_AND_r,
+        /* 0xA4 */ &&L_AND_r,  /* 0xA5 */ &&L_AND_r,   /* 0xA6 */ &&L_AND_r,   /* 0xA7 */ &&L_AND_r,
+        /* 0xA8 */ &&L_XOR_r,  /* 0xA9 */ &&L_XOR_r,   /* 0xAA */ &&L_XOR_r,   /* 0xAB */ &&L_XOR_r,
+        /* 0xAC */ &&L_XOR_r,  /* 0xAD */ &&L_XOR_r,   /* 0xAE */ &&L_XOR_r,   /* 0xAF */ &&L_XOR_r,
+        /* 0xB0 */ &&L_OR_r,   /* 0xB1 */ &&L_OR_r,    /* 0xB2 */ &&L_OR_r,    /* 0xB3 */ &&L_OR_r,
+        /* 0xB4 */ &&L_OR_r,   /* 0xB5 */ &&L_OR_r,    /* 0xB6 */ &&L_OR_r,    /* 0xB7 */ &&L_OR_r,
+        /* 0xB8 */ &&L_CP_r,   /* 0xB9 */ &&L_CP_r,    /* 0xBA */ &&L_CP_r,    /* 0xBB */ &&L_CP_r,
+        /* 0xBC */ &&L_CP_r,   /* 0xBD */ &&L_CP_r,    /* 0xBE */ &&L_CP_r,    /* 0xBF */ &&L_CP_r,
+        /* 0xC0 */ &&L_RET_NZ, /* 0xC1 */ &&L_POP_BC,  /* 0xC2 */ &&L_JP_NZ,   /* 0xC3 */ &&L_JP,
+        /* 0xC4 */ &&L_CALL_NZ,/* 0xC5 */ &&L_PUSH_BC, /* 0xC6 */ &&L_ADD_imm, /* 0xC7 */ &&L_RST,
+        /* 0xC8 */ &&L_RET_Z,  /* 0xC9 */ &&L_RET,     /* 0xCA */ &&L_JP_Z,    /* 0xCB */ &&L_CB,
+        /* 0xCC */ &&L_CALL_Z, /* 0xCD */ &&L_CALL,     /* 0xCE */ &&L_ADC_imm, /* 0xCF */ &&L_RST,
+        /* 0xD0 */ &&L_RET_NC, /* 0xD1 */ &&L_POP_DE,  /* 0xD2 */ &&L_JP_NC,   /* 0xD3 */ &&L_OUT_imm,
+        /* 0xD4 */ &&L_CALL_NC,/* 0xD5 */ &&L_PUSH_DE, /* 0xD6 */ &&L_SUB_imm, /* 0xD7 */ &&L_RST,
+        /* 0xD8 */ &&L_RET_C,  /* 0xD9 */ &&L_EXX,     /* 0xDA */ &&L_JP_C,    /* 0xDB */ &&L_IN_imm,
+        /* 0xDC */ &&L_CALL_C, /* 0xDD */ &&L_IX,       /* 0xDE */ &&L_SBC_imm, /* 0xDF */ &&L_RST,
+        /* 0xE0 */ &&L_RET_PO, /* 0xE1 */ &&L_POP_HL,  /* 0xE2 */ &&L_JP_PO,   /* 0xE3 */ &&L_EX_SP_HL,
+        /* 0xE4 */ &&L_CALL_PO,/* 0xE5 */ &&L_PUSH_HL, /* 0xE6 */ &&L_AND_imm, /* 0xE7 */ &&L_RST,
+        /* 0xE8 */ &&L_RET_PE, /* 0xE9 */ &&L_JP_HL,   /* 0xEA */ &&L_JP_PE,   /* 0xEB */ &&L_EX_DE_HL,
+        /* 0xEC */ &&L_CALL_PE,/* 0xED */ &&L_ED,       /* 0xEE */ &&L_XOR_imm, /* 0xEF */ &&L_RST,
+        /* 0xF0 */ &&L_RET_P,  /* 0xF1 */ &&L_POP_AF,  /* 0xF2 */ &&L_JP_P,    /* 0xF3 */ &&L_DI,
+        /* 0xF4 */ &&L_CALL_P, /* 0xF5 */ &&L_PUSH_AF, /* 0xF6 */ &&L_OR_imm,  /* 0xF7 */ &&L_RST,
+        /* 0xF8 */ &&L_RET_M,  /* 0xF9 */ &&L_LD_SP_HL,/* 0xFA */ &&L_JP_M,    /* 0xFB */ &&L_EI,
+        /* 0xFC */ &&L_CALL_M, /* 0xFD */ &&L_IY,       /* 0xFE */ &&L_CP_imm,  /* 0xFF */ &&L_RST,
+    };
+    goto *main_table[opcode];
+
+    L_NOP:      goto done;
+    L_RLCA:     RLCA(sms);                               goto done;
+    L_RRCA:     RRCA(sms);                               goto done;
+    L_RLA:      RLA(sms);                                goto done;
+    L_RRA:      RRA(sms);                                goto done;
+    L_CPL:      CPL(sms);                                goto done;
+    L_DAA:      DAA(sms);                                goto done;
+    L_SCF:      SCF(sms);                                goto done;
+    L_CCF:      CCF(sms);                                goto done;
+    L_INC_r8:   INC_r8(sms, opcode);                    goto done;
+    L_DEC_r8:   DEC_r8(sms, opcode);                    goto done;
+    L_INC_r16:  INC_r16(sms, opcode);                   goto done;
+    L_DEC_r16:  DEC_r16(sms, opcode);                   goto done;
+    L_ADD_HL:   ADD_HL(sms, opcode);                    goto done;
+    L_LD16:     LD_16(sms, opcode);                     goto done;
+    L_LD_BC_A:  LD_r16_a(sms, REG_BC);                  goto done;
+    L_LD_DE_A:  LD_r16_a(sms, REG_DE);                  goto done;
+    L_LD_A_BC:  LD_a_r16(sms, REG_BC);                  goto done;
+    L_LD_A_DE:  LD_a_r16(sms, REG_DE);                  goto done;
+    L_LD_IHL:   LD_imm_r16(sms, REG_HL);                goto done;
+    L_LD_HLI:   LD_hl_imm(sms);                         goto done;
+    L_LD_IA:    LD_imm_a(sms);                           goto done;
+    L_LD_AI:    LD_a_imm(sms);                           goto done;
+    L_LD_SP_HL: LD_sp_hl(sms);                          goto done;
+    L_LD_r_u8:  LD_r_u8(sms, opcode);                   goto done;
+    L_LD_rr:    LD_rr(sms, opcode);                     goto done;
+    L_HALT:     HALT(sms);                               goto done;
+    L_ADD_r:    ADD_r(sms, opcode);                     goto done;
+    L_ADC_r:    ADC_r(sms, opcode);                     goto done;
+    L_SUB_r:    SUB_r(sms, opcode);                     goto done;
+    L_SBC_r:    SBC_r(sms, opcode);                     goto done;
+    L_AND_r:    AND_r(sms, opcode);                     goto done;
+    L_XOR_r:    XOR_r(sms, opcode);                     goto done;
+    L_OR_r:     OR_r(sms, opcode);                      goto done;
+    L_CP_r:     CP_r(sms, opcode);                      goto done;
+    L_ADD_imm:  ADD_imm(sms);                            goto done;
+    L_ADC_imm:  ADC_imm(sms);                            goto done;
+    L_SUB_imm:  SUB_imm(sms);                            goto done;
+    L_SBC_imm:  SBC_imm(sms);                            goto done;
+    L_AND_imm:  AND_imm(sms);                            goto done;
+    L_XOR_imm:  XOR_imm(sms);                            goto done;
+    L_OR_imm:   OR_imm(sms);                             goto done;
+    L_CP_imm:   CP_imm(sms);                             goto done;
+    L_DJNZ:     DJNZ(sms);                               goto done;
+    L_JR:       JR(sms);                                 goto done;
+    L_JR_NZ:    JR_cc(sms, FLAG_Z == false);             goto done;
+    L_JR_Z:     JR_cc(sms, FLAG_Z == true);              goto done;
+    L_JR_NC:    JR_cc(sms, FLAG_C == false);             goto done;
+    L_JR_C:     JR_cc(sms, FLAG_C == true);              goto done;
+    L_JP_HL:    REG_PC = REG_HL;                         goto done;
+    L_JP:       JP(sms);                                 goto done;
+    L_RET:      RET(sms);                                goto done;
+    L_CALL:     CALL(sms);                               goto done;
+    L_POP_BC:   POP_BC(sms);                             goto done;
+    L_POP_DE:   POP_DE(sms);                             goto done;
+    L_POP_HL:   POP_HL(sms);                             goto done;
+    L_POP_AF:   POP_AF(sms);                             goto done;
+    L_PUSH_BC:  PUSH(sms, REG_BC);                       goto done;
+    L_PUSH_DE:  PUSH(sms, REG_DE);                       goto done;
+    L_PUSH_HL:  PUSH(sms, REG_HL);                       goto done;
+    L_PUSH_AF:  PUSH(sms, REG_AF);                       goto done;
+    L_RET_NZ:   RET_cc(sms, FLAG_Z == false);            goto done;
+    L_RET_Z:    RET_cc(sms, FLAG_Z == true);             goto done;
+    L_RET_NC:   RET_cc(sms, FLAG_C == false);            goto done;
+    L_RET_C:    RET_cc(sms, FLAG_C == true);             goto done;
+    L_RET_PO:   RET_cc(sms, FLAG_P == false);            goto done;
+    L_RET_PE:   RET_cc(sms, FLAG_P == true);             goto done;
+    L_RET_P:    RET_cc(sms, FLAG_S == false);            goto done;
+    L_RET_M:    RET_cc(sms, FLAG_S == true);             goto done;
+    L_JP_NZ:    JP_cc(sms, FLAG_Z == false);             goto done;
+    L_JP_Z:     JP_cc(sms, FLAG_Z == true);              goto done;
+    L_JP_NC:    JP_cc(sms, FLAG_C == false);             goto done;
+    L_JP_C:     JP_cc(sms, FLAG_C == true);              goto done;
+    L_JP_PO:    JP_cc(sms, FLAG_P == false);             goto done;
+    L_JP_PE:    JP_cc(sms, FLAG_P == true);              goto done;
+    L_JP_P:     JP_cc(sms, FLAG_S == false);             goto done;
+    L_JP_M:     JP_cc(sms, FLAG_S == true);              goto done;
+    L_CALL_NZ:  CALL_cc(sms, FLAG_Z == false);           goto done;
+    L_CALL_Z:   CALL_cc(sms, FLAG_Z == true);            goto done;
+    L_CALL_NC:  CALL_cc(sms, FLAG_C == false);           goto done;
+    L_CALL_C:   CALL_cc(sms, FLAG_C == true);            goto done;
+    L_CALL_PO:  CALL_cc(sms, FLAG_P == false);           goto done;
+    L_CALL_PE:  CALL_cc(sms, FLAG_P == true);            goto done;
+    L_CALL_P:   CALL_cc(sms, FLAG_S == false);           goto done;
+    L_CALL_M:   CALL_cc(sms, FLAG_S == true);            goto done;
+    L_RST:      RST(sms, opcode & 0x38);                 goto done;
+    L_EX_AF:    EX_af_af(sms);                           goto done;
+    L_EXX:      EXX(sms);                                goto done;
+    L_EX_SP_HL: EX_sp_hl(sms);                          goto done;
+    L_EX_DE_HL: EX_de_hl(sms);                          goto done;
+    L_OUT_imm:  OUT_imm(sms);                            goto done;
+    L_IN_imm:   IN_imm(sms);                             goto done;
+    L_DI:       DI(sms);                                 goto done;
+    L_EI:       EI(sms);                                 goto done;
+    L_CB:       execute_CB(sms);                         goto done;
+    L_IX:       execute_IXIY(sms, &REG_IXH, &REG_IXL);  goto done;
+    L_ED:       execute_ED(sms);                         goto done;
+    L_IY:       execute_IXIY(sms, &REG_IYH, &REG_IYL);  goto done;
+    done: ;
+
+#else
     switch (opcode)
     {
         case 0x00: break; // nop
@@ -2086,6 +2259,7 @@ static FORCE_INLINE void execute(struct SMS_Core* sms)
             assert(0);
             break;
     }
+#endif
 }
 
 void z80_run(struct SMS_Core* sms)

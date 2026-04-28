@@ -64,6 +64,9 @@ void psg_end_frame(Sn76489*, unsigned time);
 int psg_read_samples(Sn76489*, short out[], int count);
 /* removes all samples. */
 void psg_clear_samples(Sn76489*);
+/* fast end-of-frame when audio output is not needed: resets channel clocks
+   and discards the blip buffer without running the synthesis engine. */
+void psg_skip_frame(Sn76489*);
 
 /* ------------------------- */
 /* ------SaveState Api------ */

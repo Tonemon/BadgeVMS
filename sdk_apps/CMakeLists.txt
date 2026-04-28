@@ -322,9 +322,12 @@ build_app(sms_emu PREINSTALL
      core/blargg/blip_wrap.c
     COMPILE_DEFINITIONS
      "sms_static_assert=_Static_assert"
+     SMS_JUMPTABLE
     INCLUDE_DIRS
      ${CMAKE_CURRENT_SOURCE_DIR}/sms_emu/core
      ${CMAKE_CURRENT_SOURCE_DIR}/shared
+    EXTRA_FLAGS
+     -O3
 )
 
 build_app(nes_emu PREINSTALL

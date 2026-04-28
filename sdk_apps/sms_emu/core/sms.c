@@ -742,20 +742,24 @@ void SMS_run(struct SMS_Core* sms, int cycles)
     }
 
     // flush audio.
-    psg_end_frame(sms->psg, scheduler_get_ticks(&sms->scheduler));
-    if (sms->apu_callback && sms->samples && sms->sample_size)
+    if (sms->skip_audio)
     {
-        while (psg_samples_avaliable(sms->psg))
-        {
-            const int sample_count = psg_read_samples(sms->psg, sms->samples, sms->sample_size);
-            if (!sms->skip_audio)
-            {
-                sms->apu_callback(sms->userdata, sms->samples, sample_count);
-            }
-        }
+        psg_skip_frame(sms->psg);
     }
     else
     {
-        psg_clear_samples(sms->psg);
+        psg_end_frame(sms->psg, scheduler_get_ticks(&sms->scheduler));
+        if (sms->apu_callback && sms->samples && sms->sample_size)
+        {
+            while (psg_samples_avaliable(sms->psg))
+            {
+                const int sample_count = psg_read_samples(sms->psg, sms->samples, sms->sample_size);
+                sms->apu_callback(sms->userdata, sms->samples, sample_count);
+            }
+        }
+        else
+        {
+            psg_clear_samples(sms->psg);
+        }
     }
 }

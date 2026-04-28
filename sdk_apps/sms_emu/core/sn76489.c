@@ -471,6 +471,14 @@ void psg_clear_samples(Sn76489* psg)
     blip_wrap_clear(psg->blip);
 }
 
+void psg_skip_frame(Sn76489* psg)
+{
+    for (unsigned i = 0; i < psg_array_size(psg->channels); i++) {
+        psg->channels[i].clock = 0;
+    }
+    blip_wrap_clear(psg->blip);
+}
+
 #if (defined(__cplusplus) && __cplusplus < 201103L) || (!defined(static_assert))
   #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
     #define static_assert _Static_assert
