@@ -151,7 +151,7 @@ typedef struct {
 
     /* Hidden network connection */
     bool show_hidden_ssid_dialog;
-    char hidden_ssid[64]; /* max SSID length per 802.11 is 32 bytes */
+    char hidden_ssid[64]; /* 802.11 max is 32 bytes; buffer sized for extra headroom */
     int  hidden_ssid_cursor;
     bool is_hidden_connection;
 } app_context;
@@ -2069,37 +2069,43 @@ static void handle_key_event(app_context *ctx, SDL_Event *event) {
             }
             break;
 
-        case SCREEN_WIFI:
+        case SCREEN_WIFI: {
+            int total_items = ctx->network_count + 1;
             if (key == SDLK_UP) {
                 if (ctx->selected_item > 0) {
                     ctx->selected_item--;
-                    if (ctx->selected_item < ctx->scroll_offset) {
+                    if (ctx->selected_item < ctx->scroll_offset)
                         ctx->scroll_offset = ctx->selected_item;
-                    }
                 } else {
-                    ctx->selected_item = ctx->network_count - 1;
-                    ctx->scroll_offset = (ctx->network_count > ctx->items_per_page)
-                                         ? ctx->network_count - ctx->items_per_page : 0;
+                    ctx->selected_item = total_items - 1;
+                    ctx->scroll_offset = (total_items > ctx->items_per_page)
+                                          ? total_items - ctx->items_per_page : 0;
                 }
             } else if (key == SDLK_DOWN) {
-                if (ctx->selected_item < ctx->network_count - 1) {
+                if (ctx->selected_item < total_items - 1) {
                     ctx->selected_item++;
-                    if (ctx->selected_item >= ctx->scroll_offset + ctx->items_per_page) {
+                    if (ctx->selected_item >= ctx->scroll_offset + ctx->items_per_page)
                         ctx->scroll_offset = ctx->selected_item - ctx->items_per_page + 1;
-                    }
                 } else {
                     ctx->selected_item = 0;
                     ctx->scroll_offset = 0;
                 }
             } else if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
-                ctx->selected_network = ctx->selected_item;
-                if (ctx->networks[ctx->selected_item].secured) {
-                    ctx->show_password_dialog = true;
-                    memset(ctx->password_buffer, 0, sizeof(ctx->password_buffer));
-                    ctx->password_cursor = 0;
-                    ctx->show_password   = false;
+                if (ctx->selected_item == ctx->network_count) {
+                    /* Hidden network entry */
+                    memset(ctx->hidden_ssid, 0, sizeof(ctx->hidden_ssid));
+                    ctx->hidden_ssid_cursor      = 0;
+                    ctx->show_hidden_ssid_dialog = true;
                 } else {
-                    attempt_wifi_connection(ctx);
+                    ctx->selected_network = ctx->selected_item;
+                    if (ctx->networks[ctx->selected_item].secured) {
+                        ctx->show_password_dialog = true;
+                        memset(ctx->password_buffer, 0, sizeof(ctx->password_buffer));
+                        ctx->password_cursor = 0;
+                        ctx->show_password   = false;
+                    } else {
+                        attempt_wifi_connection(ctx);
+                    }
                 }
             } else if (key == SDLK_S) {
                 ctx->network_count = 0;
@@ -2109,6 +2115,7 @@ static void handle_key_event(app_context *ctx, SDL_Event *event) {
                 nav_pop(ctx);
             }
             break;
+        }
 
         case SCREEN_ABOUT:
             if (key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_ESCAPE) {
