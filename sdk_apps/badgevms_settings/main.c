@@ -151,7 +151,7 @@ typedef struct {
 
     /* Hidden network connection */
     bool show_hidden_ssid_dialog;
-    char hidden_ssid[64];
+    char hidden_ssid[64]; /* max SSID length per 802.11 is 32 bytes */
     int  hidden_ssid_cursor;
     bool is_hidden_connection;
 } app_context;
@@ -1337,10 +1337,11 @@ static void draw_wifi_settings(app_context *ctx) {
     draw_3d_border(ctx, window_x + 15, list_y, window_w - 30, list_h, 1);
 
     ctx->items_per_page = (list_h - 6) / item_height;
-    int visible_start   = ctx->scroll_offset;
-    int visible_end     = visible_start + ctx->items_per_page;
-    if (visible_end > ctx->network_count)
-        visible_end = ctx->network_count;
+    int total_items    = ctx->network_count + 1;
+    int visible_start  = ctx->scroll_offset;
+    int visible_end    = visible_start + ctx->items_per_page;
+    if (visible_end > total_items)
+        visible_end = total_items;
 
     for (int i = visible_start; i < visible_end; i++) {
         int item_y = list_y + 3 + (i - visible_start) * item_height;
@@ -1351,22 +1352,25 @@ static void draw_wifi_settings(app_context *ctx) {
             draw_rect(ctx, item_x, item_y, item_w, item_height - 2, CDE_SELECTED_BG);
         }
 
-        uint32_t text_color = (i == ctx->selected_item) ? CDE_SELECTED_TEXT : CDE_TEXT_COLOR;
+        uint32_t text_color = (i == ctx->selected_item) ? CDE_SELECTED_TEXT : CDE_INACTIVE_TEXT;
 
-        draw_text_bold(ctx, item_x + 10, item_y + 10, ctx->networks[i].ssid, text_color);
-
-        if (ctx->networks[i].connected) {
-            draw_text(ctx, item_x + 10, item_y + 35, "[Connected]", CDE_SUCCESS_COLOR);
+        if (i == ctx->network_count) {
+            draw_text_bold(ctx, item_x + 10, item_y + 10, "Hidden network", text_color);
+        } else {
+            uint32_t label_color = (i == ctx->selected_item) ? CDE_SELECTED_TEXT : CDE_TEXT_COLOR;
+            draw_text_bold(ctx, item_x + 10, item_y + 10, ctx->networks[i].ssid, label_color);
+            if (ctx->networks[i].connected) {
+                draw_text(ctx, item_x + 10, item_y + 35, "[Connected]", CDE_SUCCESS_COLOR);
+            }
+            draw_signal_strength(ctx, item_x + item_w - 50, item_y + 20, ctx->networks[i].signal_strength);
         }
-
-        draw_signal_strength(ctx, item_x + item_w - 50, item_y + 20, ctx->networks[i].signal_strength);
 
         if (i < visible_end - 1) {
             draw_rect(ctx, item_x, item_y + item_height - 2, item_w, 1, CDE_BORDER_DARK);
         }
     }
 
-    if (ctx->network_count > ctx->items_per_page) {
+    if (total_items > ctx->items_per_page) {
         int scrollbar_x = window_x + window_w - 35;
         int scrollbar_y = list_y + 3;
         int scrollbar_h = list_h - 6;
@@ -1374,13 +1378,13 @@ static void draw_wifi_settings(app_context *ctx) {
         draw_rect(ctx, scrollbar_x, scrollbar_y, 20, scrollbar_h, CDE_BUTTON_COLOR);
         draw_3d_border(ctx, scrollbar_x, scrollbar_y, 20, scrollbar_h, 1);
 
-        int thumb_h = (scrollbar_h * ctx->items_per_page) / ctx->network_count;
+        int thumb_h = (scrollbar_h * ctx->items_per_page) / total_items;
         if (thumb_h < 30)
             thumb_h = 30;
 
         int thumb_y = scrollbar_y;
-        if (ctx->network_count > ctx->items_per_page) {
-            thumb_y += ((scrollbar_h - thumb_h) * ctx->scroll_offset) / (ctx->network_count - ctx->items_per_page);
+        if (total_items > ctx->items_per_page) {
+            thumb_y += ((scrollbar_h - thumb_h) * ctx->scroll_offset) / (total_items - ctx->items_per_page);
         }
 
         draw_rect(ctx, scrollbar_x + 3, thumb_y, 14, thumb_h, CDE_PANEL_COLOR);
