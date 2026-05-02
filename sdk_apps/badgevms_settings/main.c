@@ -154,6 +154,7 @@ typedef struct {
     char hidden_ssid[64]; /* 802.11 max is 32 bytes; buffer sized for extra headroom */
     int  hidden_ssid_cursor;
     bool is_hidden_connection;
+    bool hidden_network_connected;
 } app_context;
 
 static void render_screen(app_context *ctx);
@@ -1309,7 +1310,9 @@ static void draw_wifi_settings(app_context *ctx) {
     draw_rect(ctx, window_x + 3, window_y + 3, window_w - 6, title_h, CDE_TITLE_BG);
     draw_text_bold(ctx, window_x + 15, window_y + 11, "WiFi Settings", CDE_SELECTED_TEXT);
 
-    bool is_connected = false;
+    bool is_connected = ctx->hidden_network_connected;
+    if (is_connected)
+        snprintf(ctx->connection_status_text, sizeof(ctx->connection_status_text), "Connected");
     for (int i = 0; i < ctx->network_count; i++) {
         if (ctx->networks[i].connected) {
             snprintf(ctx->connection_status_text, sizeof(ctx->connection_status_text), "Connected");
@@ -1596,6 +1599,7 @@ static void draw_about_dialog(app_context *ctx) {
 }
 
 static void attempt_wifi_connection(app_context *ctx) {
+    ctx->hidden_network_connected = false;
     const char *ssid;
     if (ctx->is_hidden_connection) {
         ssid = ctx->hidden_ssid;
@@ -1618,6 +1622,10 @@ static void attempt_wifi_connection(app_context *ctx) {
         case WIFI_CONNECTED:
             for (int i = 0; i < ctx->network_count; i++)
                 ctx->networks[i].connected = false;
+            if (ctx->is_hidden_connection)
+                ctx->hidden_network_connected = true;
+            else
+                ctx->networks[ctx->selected_network].connected = true;
             snprintf(ctx->connection_status_text, sizeof(ctx->connection_status_text), "Connected");
             break;
         case WIFI_ERROR_WRONG_CREDENTIALS:
