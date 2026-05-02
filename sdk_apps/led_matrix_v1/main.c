@@ -128,17 +128,21 @@ static const uint8_t font5x7[][5] = {
 #define SCREEN_WIDTH  720
 #define SCREEN_HEIGHT 720
 
-/* LED matrix display constants */
-#define MATRIX_COLS    5
-#define MATRIX_ROWS    8
-#define LED_SIZE       40
-#define LED_GAP        8
-#define LED_CELL       (LED_SIZE + LED_GAP)
+/* LED matrix display constants.
+ * Rectangular cells (wider than tall) to fill the square screen — the 5:8
+ * matrix aspect ratio means square cells leave too much horizontal space. */
+#define MATRIX_COLS     5
+#define MATRIX_ROWS     8
+#define LED_W           106   /* cell width  (pixels) */
+#define LED_H            62   /* cell height (pixels) */
+#define LED_GAP          10   /* gap between cells    */
+#define LED_CELL_W      (LED_W + LED_GAP)   /* 116 */
+#define LED_CELL_H      (LED_H + LED_GAP)   /* 72  */
 
-#define MATRIX_PX_W    (MATRIX_COLS * LED_CELL - LED_GAP)
-#define MATRIX_PX_H    (MATRIX_ROWS * LED_CELL - LED_GAP)
-#define MATRIX_ORIGIN_X ((SCREEN_WIDTH - MATRIX_PX_W) / 2)
-#define MATRIX_ORIGIN_Y 20
+#define MATRIX_PX_W     (MATRIX_COLS * LED_CELL_W - LED_GAP)  /* 570 */
+#define MATRIX_PX_H     (MATRIX_ROWS * LED_CELL_H - LED_GAP)  /* 566 */
+#define MATRIX_ORIGIN_X ((SCREEN_WIDTH  - MATRIX_PX_W) / 2)   /* 75  */
+#define MATRIX_ORIGIN_Y 16
 
 #define SCROLL_INTERVAL_MS 50
 #define MAX_TEXT_LEN       127
@@ -280,10 +284,10 @@ static void render_led_matrix(AppState *s, uint8_t cols[5]) {
         for (int row = 0; row < MATRIX_ROWS; row++) {
             bool on = (cols[col] >> row) & 1;
             SDL_FRect rect = {
-                (float)(MATRIX_ORIGIN_X + col * LED_CELL),
-                (float)(MATRIX_ORIGIN_Y + row * LED_CELL),
-                (float)LED_SIZE,
-                (float)LED_SIZE
+                (float)(MATRIX_ORIGIN_X + col * LED_CELL_W),
+                (float)(MATRIX_ORIGIN_Y + row * LED_CELL_H),
+                (float)LED_W,
+                (float)LED_H
             };
             SDL_SetRenderDrawColor(r,
                 on ? 0x00 : 0x1A,
@@ -311,185 +315,146 @@ static void render_text_centered(SDL_Renderer *r, float cx, float y, const char 
 }
 
 /* -------------------------------------------------------------------------
- * Diag screen rendering
+ * Diag screen rendering — compact strip below the matrix (y=584..720)
  * ------------------------------------------------------------------------- */
+#define CTRL_Y_TOP  (MATRIX_ORIGIN_Y + MATRIX_PX_H + 6)   /* ~588 */
+
 static void render_diag(AppState *s) {
     SDL_Renderer *r = s->renderer;
-    float y = 165.0f;
 
-    /* Title */
-    SDL_SetRenderDrawColor(r, 0xFF, 0xCC, 0x00, SDL_ALPHA_OPAQUE);
-    render_text_centered(r, 360.0f, y, "--- DIAGNOSTICS ---");
-    y += 24.0f;
+    /* Line 1: device + I2C scan summary */
+    bool pca_found = false;
+    char scan_addrs[128] = {0};
+    int  scan_pos = 0;
+    for (int i = 0; i < s->diag_scan_count && i < 20; i++) {
+        uint8_t addr = s->diag_scan_results[i].address;
+        if (addr == 0x20) pca_found = true;
+        int n = SDL_snprintf(scan_addrs + scan_pos,
+            sizeof(scan_addrs) - (size_t)scan_pos, "0x%02X ", addr);
+        scan_pos += n;
+    }
 
-    /* LEDMATRIX0 status */
+    float y = (float)CTRL_Y_TOP;
     if (s->led_matrix) {
-        SDL_SetRenderDrawColor(r, 0x00, 0xFF, 0x00, SDL_ALPHA_OPAQUE);
+        SDL_SetRenderDrawColor(r, 0x00, 0xCC, 0x00, SDL_ALPHA_OPAQUE);
         SDL_RenderDebugText(r, 40.0f, y, "LEDMATRIX0: FOUND");
     } else {
         SDL_SetRenderDrawColor(r, 0xFF, 0x44, 0x44, SDL_ALPHA_OPAQUE);
         SDL_RenderDebugText(r, 40.0f, y, "LEDMATRIX0: NOT FOUND");
     }
-    y += 20.0f;
-
-    /* I2C scan header */
-    SDL_SetRenderDrawColor(r, 0x88, 0x88, 0x88, SDL_ALPHA_OPAQUE);
-    SDL_RenderDebugTextFormat(r, 40.0f, y, "I2C scan: %d device(s) found", s->diag_scan_count);
-    y += 16.0f;
-
-    /* Print found addresses, up to 16 per row */
-    bool pca_found = false;
-    {
-        char line[256] = {0};
-        int line_pos = 0;
-        for (int i = 0; i < s->diag_scan_count && i < 32; i++) {
-            uint8_t addr = s->diag_scan_results[i].address;
-            if (addr == 0x20) pca_found = true;
-            int written = SDL_snprintf(line + line_pos, sizeof(line) - (size_t)line_pos,
-                "0x%02X ", addr);
-            line_pos += written;
-            if ((i + 1) % 16 == 0) {
-                SDL_SetRenderDrawColor(r, 0x99, 0xCC, 0xFF, SDL_ALPHA_OPAQUE);
-                SDL_RenderDebugText(r, 40.0f, y, line);
-                y += 14.0f;
-                line_pos = 0;
-                line[0] = '\0';
-            }
-        }
-        if (line_pos > 0) {
-            SDL_SetRenderDrawColor(r, 0x99, 0xCC, 0xFF, SDL_ALPHA_OPAQUE);
-            SDL_RenderDebugText(r, 40.0f, y, line);
-            y += 14.0f;
-        }
-    }
-
-    /* PCA9698 specific result */
     if (pca_found) {
-        SDL_SetRenderDrawColor(r, 0x00, 0xFF, 0x00, SDL_ALPHA_OPAQUE);
-        SDL_RenderDebugText(r, 40.0f, y, "PCA9698 @ 0x20: DETECTED");
+        SDL_SetRenderDrawColor(r, 0x00, 0xCC, 0x00, SDL_ALPHA_OPAQUE);
+        SDL_RenderDebugText(r, 260.0f, y, "PCA9698@0x20: OK");
     } else {
         SDL_SetRenderDrawColor(r, 0xFF, 0x44, 0x44, SDL_ALPHA_OPAQUE);
-        SDL_RenderDebugText(r, 40.0f, y, "PCA9698 @ 0x20: NOT FOUND");
+        SDL_RenderDebugText(r, 260.0f, y, "PCA9698@0x20: MISSING");
     }
-    y += 24.0f;
+    SDL_SetRenderDrawColor(r, 0x66, 0x66, 0x66, SDL_ALPHA_OPAQUE);
+    SDL_RenderDebugTextFormat(r, 480.0f, y, "R=rescan(%d found)", s->diag_scan_count);
+    y += 14.0f;
 
-    /* Separator */
-    SDL_SetRenderDrawColor(r, 0x33, 0x33, 0x33, SDL_ALPHA_OPAQUE);
-    SDL_FRect sep = { 40.0f, y, 640.0f, 1.0f };
-    SDL_RenderFillRect(r, &sep);
-    y += 10.0f;
-
-    /* Test pattern list */
-    SDL_SetRenderDrawColor(r, 0x88, 0x88, 0x88, SDL_ALPHA_OPAQUE);
-    SDL_RenderDebugText(r, 40.0f, y, "Test patterns:");
+    /* Line 2: found addresses */
+    SDL_SetRenderDrawColor(r, 0x77, 0x99, 0xBB, SDL_ALPHA_OPAQUE);
+    SDL_RenderDebugTextFormat(r, 40.0f, y, "Bus: %s",
+        scan_pos > 0 ? scan_addrs : "(none)");
     y += 16.0f;
 
-    /* Show patterns in two columns */
-    int col_w = 310;
-    for (int i = 0; i < DIAG_NUM_PATTERNS; i++) {
-        float px = 40.0f + (float)((i / 9) * col_w);
-        float py = y + (float)((i % 9) * 16);
+    /* Separator */
+    SDL_SetRenderDrawColor(r, 0x2A, 0x2A, 0x2A, SDL_ALPHA_OPAQUE);
+    SDL_FRect sep = { 40.0f, y, 640.0f, 1.0f };
+    SDL_RenderFillRect(r, &sep);
+    y += 4.0f;
 
-        if (i == s->diag_pattern) {
-            SDL_SetRenderDrawColor(r, 0x00, 0x78, 0xD4, SDL_ALPHA_OPAQUE);
-            SDL_FRect sel = { px - 4.0f, py - 1.0f, (float)col_w - 10.0f, 14.0f };
-            SDL_RenderFillRect(r, &sel);
+    /* Pattern list — show 5 visible rows, scroll window around selection */
+    int visible = 5;
+    int start = s->diag_pattern - 2;
+    if (start < 0) start = 0;
+    if (start > DIAG_NUM_PATTERNS - visible) start = DIAG_NUM_PATTERNS - visible;
+
+    for (int i = start; i < start + visible && i < DIAG_NUM_PATTERNS; i++) {
+        bool sel = (i == s->diag_pattern);
+        if (sel) {
+            SDL_SetRenderDrawColor(r, 0x00, 0x60, 0xAA, SDL_ALPHA_OPAQUE);
+            SDL_FRect hl = { 36.0f, y - 1.0f, 420.0f, 13.0f };
+            SDL_RenderFillRect(r, &hl);
             SDL_SetRenderDrawColor(r, 0xFF, 0xFF, 0xFF, SDL_ALPHA_OPAQUE);
         } else {
-            SDL_SetRenderDrawColor(r, 0x77, 0x77, 0x77, SDL_ALPHA_OPAQUE);
+            SDL_SetRenderDrawColor(r, 0x66, 0x66, 0x66, SDL_ALPHA_OPAQUE);
         }
-        SDL_RenderDebugTextFormat(r, px, py, "%s%s",
-            i == s->diag_pattern ? "> " : "  ",
-            diag_pattern_names[i]);
+        SDL_RenderDebugTextFormat(r, 40.0f, y, "%s %s",
+            sel ? ">" : " ", diag_pattern_names[i]);
+        y += 13.0f;
     }
-
-    y += (float)(9 * 16) + 8.0f;
+    y += 2.0f;
 
     /* Key hints */
     SDL_SetRenderDrawColor(r, 0x44, 0x44, 0x44, SDL_ALPHA_OPAQUE);
     render_text_centered(r, 360.0f, y,
-        "UP/DOWN select pattern   R rescan   D exit diag   ESC quit");
+        "UP/DOWN pattern   R rescan   D exit diag   ESC quit");
 }
 
 /* -------------------------------------------------------------------------
- * Normal mode rendering
+ * Normal mode rendering — compact strip below the matrix (y≈588..720)
  * ------------------------------------------------------------------------- */
 static void render_normal(AppState *s, uint8_t cols[5]) {
     SDL_Renderer *r = s->renderer;
+    float y = (float)CTRL_Y_TOP;
 
-    /* Mode selector */
-    float mid_y = 185.0f;
-    SDL_SetRenderDrawColor(r, 0x33, 0x33, 0x33, SDL_ALPHA_OPAQUE);
-    SDL_FRect mode_box = { 200.0f, 160.0f, 320.0f, 60.0f };
-    SDL_RenderFillRect(r, &mode_box);
-    SDL_SetRenderDrawColor(r, 0x55, 0x55, 0x55, SDL_ALPHA_OPAQUE);
-    render_rect_outline(r, 200.0f, 160.0f, 320.0f, 60.0f, 2.0f);
-
+    /* Line 1: device status + mode */
+    SDL_SetRenderDrawColor(r, 0x66, 0x66, 0x66, SDL_ALPHA_OPAQUE);
+    SDL_RenderDebugTextFormat(r, 40.0f, y, "LEDMATRIX0: %s",
+        s->led_matrix ? "connected" : "preview only");
     if (s->mode == 0) {
-        SDL_SetRenderDrawColor(r, 0x00, 0xFF, 0x00, SDL_ALPHA_OPAQUE);
-        render_text_centered(r, 360.0f, mid_y, "[ STATIC ]");
+        SDL_SetRenderDrawColor(r, 0x00, 0xCC, 0x00, SDL_ALPHA_OPAQUE);
+        SDL_RenderDebugText(r, 400.0f, y, "[ STATIC ]  M=scroll");
     } else {
         SDL_SetRenderDrawColor(r, 0xFF, 0xAA, 0x00, SDL_ALPHA_OPAQUE);
-        render_text_centered(r, 360.0f, mid_y, "[ SCROLL ]");
+        SDL_RenderDebugText(r, 400.0f, y, "[ SCROLL ]  M=static");
     }
-    SDL_SetRenderDrawColor(r, 0x66, 0x66, 0x66, SDL_ALPHA_OPAQUE);
-    render_text_centered(r, 360.0f, 232.0f, "M to toggle mode");
+    y += 16.0f;
 
-    /* Text input area */
-    SDL_SetRenderDrawColor(r, 0x22, 0x22, 0x22, SDL_ALPHA_OPAQUE);
-    SDL_FRect text_box = { 60.0f, 280.0f, 600.0f, 80.0f };
-    SDL_RenderFillRect(r, &text_box);
-    if (s->editing) {
-        SDL_SetRenderDrawColor(r, 0x00, 0xCC, 0xFF, SDL_ALPHA_OPAQUE);
-    } else {
-        SDL_SetRenderDrawColor(r, 0x44, 0x44, 0x44, SDL_ALPHA_OPAQUE);
-    }
-    render_rect_outline(r, 60.0f, 280.0f, 600.0f, 80.0f, 2.0f);
-
-    SDL_SetRenderDrawColor(r, 0x88, 0x88, 0x88, SDL_ALPHA_OPAQUE);
-    SDL_RenderDebugText(r, 70.0f, 290.0f, "Text:");
-
+    /* Line 2: text content */
+    SDL_SetRenderDrawColor(r, 0x55, 0x55, 0x55, SDL_ALPHA_OPAQUE);
+    SDL_RenderDebugText(r, 40.0f, y, "Text:");
     if (s->text_len > 0) {
-        SDL_SetRenderDrawColor(r, 0xFF, 0xFF, 0xFF, SDL_ALPHA_OPAQUE);
-        int max_chars = 70;
+        SDL_SetRenderDrawColor(r, 0xDD, 0xDD, 0xDD, SDL_ALPHA_OPAQUE);
+        int max_chars = 76;
         const char *display = s->text;
         if (s->text_len > max_chars) display = s->text + (s->text_len - max_chars);
-        SDL_RenderDebugText(r, 70.0f, 312.0f, display);
+        SDL_RenderDebugText(r, 84.0f, y, display);
         if (s->editing) {
-            int disp_len = (int)SDL_strlen(display);
-            SDL_RenderDebugText(r, 70.0f + (float)(disp_len * 8), 312.0f, "_");
+            float cx = 84.0f + (float)(SDL_strlen(display) * 8);
+            SDL_RenderDebugText(r, cx, y, "_");
         }
     } else {
         SDL_SetRenderDrawColor(r, 0x44, 0x44, 0x44, SDL_ALPHA_OPAQUE);
-        SDL_RenderDebugText(r, 70.0f, 312.0f, s->editing ? "_" : "(empty)");
+        SDL_RenderDebugText(r, 84.0f, y, s->editing ? "_" : "(empty — press T to type)");
     }
+    y += 16.0f;
 
-    SDL_SetRenderDrawColor(r, 0x55, 0x55, 0x55, SDL_ALPHA_OPAQUE);
+    /* Line 3: context hint */
+    SDL_SetRenderDrawColor(r, 0x44, 0x44, 0x44, SDL_ALPHA_OPAQUE);
     if (s->editing) {
-        SDL_RenderDebugText(r, 70.0f, 342.0f, "Typing... BACKSPACE to delete, ENTER/ESC to finish");
-    } else {
-        SDL_RenderDebugText(r, 70.0f, 342.0f, "T to edit text");
-    }
-
-    /* Static mode char indicator */
-    if (s->mode == 0 && s->text_len > 0 && !s->editing) {
-        SDL_SetRenderDrawColor(r, 0x66, 0x66, 0x66, SDL_ALPHA_OPAQUE);
+        SDL_RenderDebugText(r, 40.0f, y,
+            "Editing — BACKSPACE delete   ENTER/ESC done");
+    } else if (s->mode == 0 && s->text_len > 0) {
         char buf[64];
-        SDL_snprintf(buf, sizeof(buf), "Showing char %d/%d: '%c'",
+        SDL_snprintf(buf, sizeof(buf), "Char %d/%d: '%c'   LEFT/RIGHT to navigate",
             s->static_char_idx + 1, s->text_len,
             (unsigned char)s->text[s->static_char_idx] >= 0x20
                 ? s->text[s->static_char_idx] : '?');
-        render_text_centered(r, 360.0f, 375.0f, buf);
-    }
-
-    /* Key hints */
-    SDL_SetRenderDrawColor(r, 0x44, 0x44, 0x44, SDL_ALPHA_OPAQUE);
-    if (s->mode == 0) {
-        render_text_centered(r, 360.0f, 410.0f,
-            "LEFT/RIGHT navigate   T edit   M mode   D diag   ESC quit");
+        SDL_RenderDebugText(r, 40.0f, y, buf);
     } else {
-        render_text_centered(r, 360.0f, 410.0f,
-            "T edit text   M mode   D diag   ESC quit");
+        SDL_RenderDebugText(r, 40.0f, y, "T edit   M mode   D diagnostics   ESC quit");
+    }
+    y += 16.0f;
+
+    /* Line 4: key hints (only when not editing and not already shown above) */
+    if (!s->editing && !(s->mode == 0 && s->text_len > 0)) {
+        /* already covered in line 3 */
+    } else if (!s->editing) {
+        SDL_SetRenderDrawColor(r, 0x33, 0x33, 0x33, SDL_ALPHA_OPAQUE);
+        SDL_RenderDebugText(r, 40.0f, y, "T edit   M mode   D diagnostics   ESC quit");
     }
 
     (void)cols;
@@ -702,11 +667,6 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
 
     /* LED matrix preview (always shown) */
     render_led_matrix(s, cols);
-
-    /* Status label above preview */
-    SDL_SetRenderDrawColor(r, 0xAA, 0xAA, 0xAA, SDL_ALPHA_OPAQUE);
-    SDL_RenderDebugTextFormat(r, (float)MATRIX_ORIGIN_X, (float)(MATRIX_ORIGIN_Y - 14),
-        "LEDMATRIX0 %s", s->led_matrix ? "(connected)" : "(preview only)");
 
     /* Mode-specific content */
     if (s->mode == 2) {
