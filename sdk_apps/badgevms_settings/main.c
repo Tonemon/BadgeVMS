@@ -1223,9 +1223,9 @@ static void draw_main_settings(app_context *ctx) {
             const char *val = ctx->hostname[0] ? ctx->hostname : "(not set)";
             int val_x = item_x + item_w - get_text_width(val) - 15;
             draw_text(ctx, val_x, item_y + 12, val, val_color);
-        } else if (i == 3) { /* Boot animation: inline [SPLASH]/[TERMINAL] cycle */
-            static const char * const anim_names[] = { "SPLASH", "TERMINAL" };
-            int idx = (ctx->boot_animation >= 0 && ctx->boot_animation <= 1)
+        } else if (i == 3) { /* Boot animation: inline [SPLASH]/[TERMINAL]/[BOTH] cycle */
+            static const char * const anim_names[] = { "SPLASH", "TERMINAL", "BOTH" };
+            int idx = (ctx->boot_animation >= 0 && ctx->boot_animation <= 2)
                       ? ctx->boot_animation : 0;
             char toggle_str[16];
             snprintf(toggle_str, sizeof(toggle_str), "[%s]", anim_names[idx]);
@@ -2131,8 +2131,8 @@ static void handle_key_event(app_context *ctx, SDL_Event *event) {
                         ctx->text_input_max_len = (int)(sizeof(ctx->hostname) - 1);
                         ctx->show_text_input_dialog = true;
                         break;
-                    case 3: /* Boot animation: cycle SPLASH → TERMINAL → SPLASH */
-                        ctx->boot_animation = (ctx->boot_animation + 1) % 2;
+                    case 3: /* Boot animation: cycle SPLASH → TERMINAL → BOTH → SPLASH */
+                        ctx->boot_animation = (ctx->boot_animation + 1) % 3;
                         launcher_config_save(ctx);
                         break;
                     case 4: /* Display username at boot: toggle */
@@ -2159,7 +2159,7 @@ static void handle_key_event(app_context *ctx, SDL_Event *event) {
                 }
             } else if (key == SDLK_SPACE) {
                 if (ctx->selected_item == 3) {
-                    ctx->boot_animation = (ctx->boot_animation + 1) % 2;
+                    ctx->boot_animation = (ctx->boot_animation + 1) % 3;
                     launcher_config_save(ctx);
                 } else if (ctx->selected_item == 4) {
                     ctx->display_username_at_boot = !ctx->display_username_at_boot;

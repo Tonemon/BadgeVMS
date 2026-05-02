@@ -1067,7 +1067,7 @@ int main(int argc, char *argv[]) {
     char boot_owner_name[64]  = {0};
     char boot_hostname[128]   = "why2025badge";
     bool boot_display_name    = false;
-    int  boot_animation       = 0;   /* 0 = splash, 1 = terminal */
+    int  boot_animation       = 0;   /* 0 = splash, 1 = terminal, 2 = both */
     {
         FILE *cfg_f = fopen("APPS:[badgevms_launcher]config.json", "r");
         if (cfg_f) {
@@ -1104,7 +1104,11 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    /* 6. Boot animation loop — runs until scan done AND 2000 ms elapsed */
+    /* 6. Boot animation loop — runs until scan done AND minimum elapsed:
+     *    splash/terminal: 2000 ms; both: 3000 ms (2000 ms terminal + 1000 ms splash) */
+#define BOTH_SWITCH_MS 2000u
+#define BOTH_MIN_MS    3000u
+
     Launcher_Context boot_ctx = {0};
     boot_ctx.pixels = framebuffer->pixels;
 
@@ -1120,7 +1124,8 @@ int main(int argc, char *argv[]) {
         float bright    = 0.875f + 0.125f * sinf(2.0f * (float)M_PI * elapsed_ms / 2000.0f);
         int   dot_count = (int)(elapsed_ms / 500) % 4;
 
-        if (boot_animation == 1) {
+        if (boot_animation == 1 ||
+            (boot_animation == 2 && elapsed_ms < BOTH_SWITCH_MS)) {
             draw_terminal_boot_screen(&boot_ctx, elapsed_ms, boot_hostname);
         } else {
             draw_boot_screen(&boot_ctx, logo_data, logo_w, logo_h, logo_ch, bright, dot_count,
@@ -1128,7 +1133,8 @@ int main(int argc, char *argv[]) {
         }
         window_present(window, true, NULL, 0);
 
-        if (atomic_load(&g_scan_done) && elapsed_ms >= 2000)
+        uint32_t min_ms = (boot_animation == 2) ? BOTH_MIN_MS : 2000u;
+        if (atomic_load(&g_scan_done) && elapsed_ms >= min_ms)
             break;
 
         usleep(33 * 1000); /* ~30 fps */
