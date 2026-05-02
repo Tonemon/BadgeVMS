@@ -1994,9 +1994,39 @@ static void handle_key_event(app_context *ctx, SDL_Event *event) {
         return;
     }
 
+    if (ctx->show_hidden_ssid_dialog) {
+        if (event->type == SDL_EVENT_TEXT_INPUT) {
+            if (ctx->hidden_ssid_cursor < (int)sizeof(ctx->hidden_ssid) - 1) {
+                strncat(ctx->hidden_ssid, event->text.text,
+                        (size_t)(sizeof(ctx->hidden_ssid) - 1 - ctx->hidden_ssid_cursor));
+                ctx->hidden_ssid_cursor = (int)strlen(ctx->hidden_ssid);
+            }
+        } else if (key == SDLK_BACKSPACE) {
+            if (ctx->hidden_ssid_cursor > 0) {
+                ctx->hidden_ssid_cursor--;
+                ctx->hidden_ssid[ctx->hidden_ssid_cursor] = '\0';
+            }
+        } else if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
+            if (ctx->hidden_ssid[0] != '\0') {
+                ctx->show_hidden_ssid_dialog = false;
+                ctx->is_hidden_connection    = true;
+                ctx->show_password_dialog    = true;
+                memset(ctx->password_buffer, 0, sizeof(ctx->password_buffer));
+                ctx->password_cursor = 0;
+                ctx->show_password   = false;
+            }
+        } else if (key == SDLK_ESCAPE) {
+            ctx->show_hidden_ssid_dialog = false;
+            memset(ctx->hidden_ssid, 0, sizeof(ctx->hidden_ssid));
+            ctx->hidden_ssid_cursor = 0;
+        }
+        return;
+    }
+
     if (ctx->show_password_dialog) {
         if (key == SDLK_ESCAPE) {
             ctx->show_password_dialog = false;
+            ctx->is_hidden_connection = false;
             memset(ctx->password_buffer, 0, sizeof(ctx->password_buffer));
             ctx->password_cursor = 0;
         } else if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
@@ -2187,6 +2217,9 @@ static void render_screen(app_context *ctx) {
             break;
         case SCREEN_WIFI:
             draw_wifi_settings(ctx);
+            if (ctx->show_hidden_ssid_dialog) {
+                draw_hidden_ssid_dialog(ctx);
+            }
             if (ctx->show_password_dialog) {
                 draw_password_dialog(ctx);
             }
