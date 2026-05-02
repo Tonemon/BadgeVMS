@@ -106,3 +106,4 @@ wifi_auth_mode_t wifi_station_get_mode(wifi_station_handle station);
 bool             wifi_station_wps(wifi_station_handle station);
 bool             wifi_set_connection_parameters(char const *ssid, char const *password);
 void             wifi_set_hostname(char const *hostname);
+void             wifi_set_mac_randomization(bool enabled);

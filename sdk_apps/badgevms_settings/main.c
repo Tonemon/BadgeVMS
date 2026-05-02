@@ -139,6 +139,7 @@ typedef struct {
     char badge_owner_name[64];
     bool display_username_at_boot;
     bool autorotate;
+    bool mac_randomization;
     int  boot_animation;   /* 0 = splash, 1 = terminal */
 
     /* Generic text input dialog */
@@ -934,6 +935,7 @@ static void launcher_config_load(app_context *ctx) {
     strncpy(ctx->badge_owner_name, "John",            sizeof(ctx->badge_owner_name) - 1);
     ctx->display_username_at_boot = false;
     ctx->autorotate               = true;
+    ctx->mac_randomization        = false;
     ctx->boot_animation           = 0;
 
     FILE *f = fopen("APPS:[badgevms_launcher]config.json", "r");
@@ -958,6 +960,7 @@ static void launcher_config_load(app_context *ctx) {
     cJSON *bon  = cJSON_GetObjectItem(cfg, "badge_owner_name");
     cJSON *dub  = cJSON_GetObjectItem(cfg, "display_username_at_boot");
     cJSON *ar   = cJSON_GetObjectItem(cfg, "autorotate");
+    cJSON *mr   = cJSON_GetObjectItem(cfg, "mac_randomization");
     cJSON *ba   = cJSON_GetObjectItem(cfg, "boot_animation");
     if (cJSON_IsBool(lda))
         ctx->launch_default_app = cJSON_IsTrue(lda);
@@ -972,6 +975,8 @@ static void launcher_config_load(app_context *ctx) {
         ctx->display_username_at_boot = cJSON_IsTrue(dub);
     if (cJSON_IsBool(ar))
         ctx->autorotate = cJSON_IsTrue(ar);
+    if (cJSON_IsBool(mr))
+        ctx->mac_randomization = cJSON_IsTrue(mr);
     if (cJSON_IsNumber(ba))
         ctx->boot_animation = (int)cJSON_GetNumberValue(ba);
     cJSON_Delete(cfg);
@@ -1000,6 +1005,7 @@ static void launcher_config_load(app_context *ctx) {
     }
 
     wifi_set_hostname(ctx->hostname);
+    wifi_set_mac_randomization(ctx->mac_randomization);
 }
 
 static void launcher_config_save(app_context *ctx) {
@@ -1011,6 +1017,7 @@ static void launcher_config_save(app_context *ctx) {
     cJSON_AddStringToObject(cfg, "badge_owner_name",         ctx->badge_owner_name);
     cJSON_AddBoolToObject(cfg,   "display_username_at_boot", ctx->display_username_at_boot);
     cJSON_AddBoolToObject(cfg,   "autorotate",               ctx->autorotate);
+    cJSON_AddBoolToObject(cfg,   "mac_randomization",        ctx->mac_randomization);
     cJSON_AddNumberToObject(cfg, "boot_animation",           ctx->boot_animation);
     char *json_str = cJSON_Print(cfg);
     cJSON_Delete(cfg);
@@ -1019,8 +1026,8 @@ static void launcher_config_save(app_context *ctx) {
     if (f) { fputs(json_str, f); fclose(f); }
     free(json_str);
 
-    /* Push the hostname into the network stack immediately */
     wifi_set_hostname(ctx->hostname);
+    wifi_set_mac_randomization(ctx->mac_randomization);
 }
 
 static void draw_app_chooser_dialog(app_context *ctx) {
@@ -1142,6 +1149,7 @@ static void draw_main_settings(app_context *ctx) {
         "Boot animation",
         "Display username at boot",
         "Autorotate",
+        "MAC randomization",
         "Reorder Apps",
         "Default app",
         "About"
@@ -1153,11 +1161,12 @@ static void draw_main_settings(app_context *ctx) {
         "Animation shown while the badge is booting",
         "Show your name during the boot sequence",
         "Flip display when badge is held upside down",
+        "Use a random MAC address (takes effect on reboot)",
         "Organise launcher home screen and folders",
         "The application launched at boot",
         "Badge specifications"
     };
-    ctx->total_items = 9;
+    ctx->total_items = 10;
 
     int list_y      = window_y + title_h + 20;
     int list_h      = window_h - title_h - 80;
@@ -1241,7 +1250,15 @@ static void draw_main_settings(app_context *ctx) {
                 ? CDE_SELECTED_TEXT
                 : (ctx->autorotate ? CDE_SUCCESS_COLOR : CDE_INACTIVE_TEXT);
             draw_text_bold(ctx, toggle_x, item_y + 12, toggle_str, toggle_color);
-        } else if (i == 7) { /* Default app: inline [ON]/[OFF] + right-aligned app name */
+        } else if (i == 6) { /* MAC randomization: inline [ON]/[OFF] */
+            int title_w    = get_text_width(categories[i]);
+            int toggle_x   = text_x + title_w + 2 * FONT_WIDTH;
+            const char *toggle_str = ctx->mac_randomization ? "[ON]" : "[OFF]";
+            uint32_t toggle_color = (i == ctx->selected_item)
+                ? CDE_SELECTED_TEXT
+                : (ctx->mac_randomization ? CDE_SUCCESS_COLOR : CDE_INACTIVE_TEXT);
+            draw_text_bold(ctx, toggle_x, item_y + 12, toggle_str, toggle_color);
+        } else if (i == 8) { /* Default app: inline [ON]/[OFF] + right-aligned app name */
             int title_w    = get_text_width(categories[i]);
             int toggle_x   = text_x + title_w + 2 * FONT_WIDTH;
             const char *toggle_str = ctx->launch_default_app ? "[ON]" : "[OFF]";
@@ -2127,14 +2144,18 @@ static void handle_key_event(app_context *ctx, SDL_Event *event) {
                         compositor_set_autorotate(ctx->autorotate);
                         launcher_config_save(ctx);
                         break;
-                    case 6: /* Reorder Apps */
+                    case 6: /* MAC randomization: toggle */
+                        ctx->mac_randomization = !ctx->mac_randomization;
+                        launcher_config_save(ctx);
+                        break;
+                    case 7: /* Reorder Apps */
                         reorder_init(ctx);
                         nav_push(ctx, SCREEN_REORDER);
                         break;
-                    case 7: /* Default app: open chooser */
+                    case 8: /* Default app: open chooser */
                         app_chooser_open(ctx);
                         break;
-                    case 8: nav_push(ctx, SCREEN_ABOUT); break;
+                    case 9: nav_push(ctx, SCREEN_ABOUT); break;
                 }
             } else if (key == SDLK_SPACE) {
                 if (ctx->selected_item == 3) {
@@ -2147,7 +2168,10 @@ static void handle_key_event(app_context *ctx, SDL_Event *event) {
                     ctx->autorotate = !ctx->autorotate;
                     compositor_set_autorotate(ctx->autorotate);
                     launcher_config_save(ctx);
-                } else if (ctx->selected_item == 7) {
+                } else if (ctx->selected_item == 6) {
+                    ctx->mac_randomization = !ctx->mac_randomization;
+                    launcher_config_save(ctx);
+                } else if (ctx->selected_item == 8) {
                     ctx->launch_default_app = !ctx->launch_default_app;
                     launcher_config_save(ctx);
                 }

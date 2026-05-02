@@ -16,6 +16,7 @@
 
 #include "esp-serial-flasher/slave_c6_flasher.h"
 #include "esp_attr.h"
+#include "esp_random.h"
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_wifi.h"
@@ -640,7 +641,34 @@ static void start_wifi() {
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+
+    /* Apply MAC randomization before start so the new MAC is in effect from
+     * the first association. A new random MAC is generated each boot. */
+    {
+        uint8_t mac_rand = 0;
+        nvs_handle_t nvs;
+        if (nvs_open("badgevms_sys", NVS_READONLY, &nvs) == ESP_OK) {
+            nvs_get_u8(nvs, "mac_rand", &mac_rand);
+            nvs_close(nvs);
+        }
+        if (mac_rand) {
+            uint8_t mac[6];
+            esp_fill_random(mac, sizeof(mac));
+            mac[0] = (mac[0] & 0xFE) | 0x02; /* locally-administered unicast */
+            esp_wifi_set_mac(WIFI_IF_STA, mac);
+        }
+    }
+
     ESP_ERROR_CHECK(esp_wifi_start());
+}
+
+void wifi_set_mac_randomization(bool enabled) {
+    nvs_handle_t nvs;
+    if (nvs_open("badgevms_sys", NVS_READWRITE, &nvs) == ESP_OK) {
+        nvs_set_u8(nvs, "mac_rand", enabled ? 1 : 0);
+        nvs_commit(nvs);
+        nvs_close(nvs);
+    }
 }
 
 void wifi_set_hostname(char const *hostname) {
