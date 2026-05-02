@@ -1166,6 +1166,9 @@ int main(int argc, char *argv[]) {
                                     sizeof(default_app_uid) - 1);
                         if (cJSON_IsString(hn) && hn->valuestring && hn->valuestring[0])
                             wifi_set_hostname(hn->valuestring);
+                        cJSON *mr = cJSON_GetObjectItem(cfg_json, "mac_randomization");
+                        if (cJSON_IsBool(mr))
+                            wifi_set_mac_randomization(cJSON_IsTrue(mr));
                         cJSON_Delete(cfg_json);
                     }
                 }
