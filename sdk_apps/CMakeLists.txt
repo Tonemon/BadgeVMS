@@ -535,5 +535,12 @@ build_app(test_wifi PREINSTALL
      main.c
 )
 
+build_app(led_matrix_v1 PREINSTALL
+    SOURCES
+     main.c
+    LIBRARIES
+     sdl3
+)
+
 get_property(SDK_APP_ELFS GLOBAL PROPERTY SDK_APP_ELFS)
 add_custom_target(sdk_app_build_all ALL DEPENDS ${SDK_APP_ELFS})
