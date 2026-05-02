@@ -2322,7 +2322,7 @@ int main(int argc, char *argv[]) {
                 case SDL_EVENT_QUIT: running = false; break;
                 case SDL_EVENT_KEY_DOWN: handle_key_event(&ctx, &event); break;
                 case SDL_EVENT_TEXT_INPUT:
-                    if (ctx.show_password_dialog || ctx.show_text_input_dialog) {
+                    if (ctx.show_password_dialog || ctx.show_text_input_dialog || ctx.show_hidden_ssid_dialog) {
                         handle_key_event(&ctx, &event);
                     } else if (ctx.current_screen == SCREEN_REORDER &&
                                ctx.reorder_dialog_type != DIALOG_NONE &&
