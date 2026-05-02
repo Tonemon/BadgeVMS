@@ -217,6 +217,9 @@ typedef struct {
     int           diag_pattern;
     i2c_scanresult_t diag_scan_results[128];
     int           diag_scan_count;
+    bool          diag_hw_responding;  /* last _write returned > 0 */
+    uint8_t       diag_pca_addrs[8];   /* which 0x20-0x27 ACKed on scan */
+    int           diag_pca_addr_count;
 } AppState;
 
 /* -------------------------------------------------------------------------
@@ -260,7 +263,8 @@ static void update_matrix(AppState *s) {
         get_diag_columns(s->diag_pattern, cols);
     }
     if (s->led_matrix) {
-        s->led_matrix->_write(s->led_matrix, 0, cols, 5);
+        ssize_t n = s->led_matrix->_write(s->led_matrix, 0, cols, 5);
+        s->diag_hw_responding = (n > 0);
     }
 }
 
@@ -269,10 +273,20 @@ static void update_matrix(AppState *s) {
  * ------------------------------------------------------------------------- */
 static void run_diag_scan(AppState *s) {
     s->diag_scan_count = 0;
+    s->diag_pca_addr_count = 0;
+
     device_t *bus = device_get("I2CBUS0");
     if (!bus) return;
     i2c_bus_device_t *i2c_bus = (i2c_bus_device_t *)bus;
     s->diag_scan_count = i2c_bus->_scan(i2c_bus, s->diag_scan_results, 128);
+
+    /* Check which PCA9698 addresses (0x20-0x27) responded */
+    for (int i = 0; i < s->diag_scan_count; i++) {
+        uint8_t addr = s->diag_scan_results[i].address;
+        if (addr >= 0x20 && addr <= 0x27 && s->diag_pca_addr_count < 8) {
+            s->diag_pca_addrs[s->diag_pca_addr_count++] = addr;
+        }
+    }
 }
 
 /* -------------------------------------------------------------------------
@@ -322,41 +336,68 @@ static void render_text_centered(SDL_Renderer *r, float cx, float y, const char 
 static void render_diag(AppState *s) {
     SDL_Renderer *r = s->renderer;
 
-    /* Line 1: device + I2C scan summary */
-    bool pca_found = false;
-    char scan_addrs[128] = {0};
+    /* Build scan address string */
+    char scan_addrs[160] = {0};
     int  scan_pos = 0;
     for (int i = 0; i < s->diag_scan_count && i < 20; i++) {
-        uint8_t addr = s->diag_scan_results[i].address;
-        if (addr == 0x20) pca_found = true;
         int n = SDL_snprintf(scan_addrs + scan_pos,
-            sizeof(scan_addrs) - (size_t)scan_pos, "0x%02X ", addr);
+            sizeof(scan_addrs) - (size_t)scan_pos,
+            "0x%02X ", s->diag_scan_results[i].address);
         scan_pos += n;
     }
 
     float y = (float)CTRL_Y_TOP;
-    if (s->led_matrix) {
-        SDL_SetRenderDrawColor(r, 0x00, 0xCC, 0x00, SDL_ALPHA_OPAQUE);
-        SDL_RenderDebugText(r, 40.0f, y, "LEDMATRIX0: FOUND");
-    } else {
-        SDL_SetRenderDrawColor(r, 0xFF, 0x44, 0x44, SDL_ALPHA_OPAQUE);
-        SDL_RenderDebugText(r, 40.0f, y, "LEDMATRIX0: NOT FOUND");
-    }
-    if (pca_found) {
-        SDL_SetRenderDrawColor(r, 0x00, 0xCC, 0x00, SDL_ALPHA_OPAQUE);
-        SDL_RenderDebugText(r, 260.0f, y, "PCA9698@0x20: OK");
-    } else {
-        SDL_SetRenderDrawColor(r, 0xFF, 0x44, 0x44, SDL_ALPHA_OPAQUE);
-        SDL_RenderDebugText(r, 260.0f, y, "PCA9698@0x20: MISSING");
-    }
+
+    /* Line 1: driver registration status (always succeeds — not a hw check) */
     SDL_SetRenderDrawColor(r, 0x66, 0x66, 0x66, SDL_ALPHA_OPAQUE);
-    SDL_RenderDebugTextFormat(r, 480.0f, y, "R=rescan(%d found)", s->diag_scan_count);
+    SDL_RenderDebugTextFormat(r, 40.0f, y, "Driver: %s",
+        s->led_matrix ? "registered (addr 0x20)" : "NOT registered");
+
+    /* Hardware response — the real indicator */
+    if (!s->led_matrix) {
+        SDL_SetRenderDrawColor(r, 0xFF, 0x44, 0x44, SDL_ALPHA_OPAQUE);
+        SDL_RenderDebugText(r, 340.0f, y, "Hardware: N/A");
+    } else if (s->diag_hw_responding) {
+        SDL_SetRenderDrawColor(r, 0x00, 0xCC, 0x00, SDL_ALPHA_OPAQUE);
+        SDL_RenderDebugText(r, 340.0f, y, "Hardware: RESPONDING");
+    } else {
+        SDL_SetRenderDrawColor(r, 0xFF, 0x44, 0x44, SDL_ALPHA_OPAQUE);
+        SDL_RenderDebugText(r, 340.0f, y, "Hardware: NOT RESPONDING");
+    }
+
+    SDL_SetRenderDrawColor(r, 0x55, 0x55, 0x55, SDL_ALPHA_OPAQUE);
+    SDL_RenderDebugTextFormat(r, 590.0f, y, "R=rescan");
     y += 14.0f;
 
-    /* Line 2: found addresses */
+    /* Line 2: full bus scan */
     SDL_SetRenderDrawColor(r, 0x77, 0x99, 0xBB, SDL_ALPHA_OPAQUE);
-    SDL_RenderDebugTextFormat(r, 40.0f, y, "Bus: %s",
-        scan_pos > 0 ? scan_addrs : "(none)");
+    SDL_RenderDebugTextFormat(r, 40.0f, y, "I2C bus (%d): %s",
+        s->diag_scan_count, scan_pos > 0 ? scan_addrs : "(none)");
+    y += 14.0f;
+
+    /* Line 3: PCA9698 address range check */
+    if (s->diag_pca_addr_count > 0) {
+        char pca_str[48] = {0};
+        int pos = 0;
+        for (int i = 0; i < s->diag_pca_addr_count; i++) {
+            int n = SDL_snprintf(pca_str + pos, sizeof(pca_str) - (size_t)pos,
+                "0x%02X ", s->diag_pca_addrs[i]);
+            pos += n;
+        }
+        SDL_SetRenderDrawColor(r, 0x00, 0xFF, 0x88, SDL_ALPHA_OPAQUE);
+        SDL_RenderDebugTextFormat(r, 40.0f, y,
+            "PCA9698 range (0x20-0x27): FOUND at %s", pca_str);
+        if (s->diag_pca_addrs[0] != 0x20) {
+            SDL_SetRenderDrawColor(r, 0xFF, 0xCC, 0x00, SDL_ALPHA_OPAQUE);
+            SDL_RenderDebugTextFormat(r, 40.0f, y + 13.0f,
+                "  ^ addr mismatch! driver uses 0x20, update why2025_firmware.c");
+            y += 13.0f;
+        }
+    } else {
+        SDL_SetRenderDrawColor(r, 0xFF, 0x44, 0x44, SDL_ALPHA_OPAQUE);
+        SDL_RenderDebugText(r, 40.0f, y,
+            "PCA9698 range (0x20-0x27): NOT FOUND — check wiring/power");
+    }
     y += 16.0f;
 
     /* Separator */
@@ -403,7 +444,8 @@ static void render_normal(AppState *s, uint8_t cols[5]) {
     /* Line 1: device status + mode */
     SDL_SetRenderDrawColor(r, 0x66, 0x66, 0x66, SDL_ALPHA_OPAQUE);
     SDL_RenderDebugTextFormat(r, 40.0f, y, "LEDMATRIX0: %s",
-        s->led_matrix ? "connected" : "preview only");
+        !s->led_matrix         ? "no driver"      :
+        s->diag_hw_responding  ? "responding"      : "driver only (D=diag)");
     if (s->mode == 0) {
         SDL_SetRenderDrawColor(r, 0x00, 0xCC, 0x00, SDL_ALPHA_OPAQUE);
         SDL_RenderDebugText(r, 400.0f, y, "[ STATIC ]  M=scroll");
@@ -507,6 +549,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
     s->editing = false;
     s->diag_pattern = 0;
 
+    run_diag_scan(s);   /* prime scan so status label is accurate from boot */
     update_matrix(s);
     return SDL_APP_CONTINUE;
 }
