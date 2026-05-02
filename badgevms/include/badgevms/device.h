@@ -36,6 +36,7 @@ typedef enum {
     DEVICE_TYPE_SOCKET,
     DEVICE_TYPE_FILESYSTEM,
     DEVICE_TYPE_GAS,
+    DEVICE_TYPE_LED_MATRIX,
 } device_type_t;
 
 typedef enum { ORIENTATION_0, ORIENTATION_90, ORIENTATION_180, ORIENTATION_270 } orientation_t;

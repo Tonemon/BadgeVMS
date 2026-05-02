@@ -30,6 +30,7 @@
 #include "drivers/badgevms_i2c_bus.h"
 #include "drivers/bosch_bmi270.h"
 #include "drivers/bosch_bme690.h"
+#include "drivers/pca9698.h"
 #include "drivers/fatfs.h"
 #include "drivers/socket.h"
 #include "drivers/st7703.h"
@@ -168,6 +169,10 @@ int app_main(void) {
     if (!device_register("GAS0", bosch_bme690_sensor_create())) {
         ESP_LOGE(TAG, "Failed to initialize GAS0 driver");
         // invalidate_ota_partition();
+    }
+
+    if (!device_register("LEDMATRIX0", pca9698_create(0x20))) {
+        ESP_LOGE(TAG, "Failed to initialize LEDMATRIX0 driver");
     }
 
     if (!compositor_init("PANEL0", "KEYBOARD0")) {
