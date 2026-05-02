@@ -1361,7 +1361,10 @@ static void draw_wifi_settings(app_context *ctx) {
             draw_text_bold(ctx, item_x + 10, item_y + 10, "Hidden network", text_color);
         } else {
             uint32_t label_color = (i == ctx->selected_item) ? CDE_SELECTED_TEXT : CDE_TEXT_COLOR;
-            draw_text_bold(ctx, item_x + 10, item_y + 10, ctx->networks[i].ssid, label_color);
+            const char *ssid_label = ctx->networks[i].ssid[0] ? ctx->networks[i].ssid
+                                   : ctx->hidden_network_connected ? ctx->hidden_ssid
+                                   : "<hidden network>";
+            draw_text_bold(ctx, item_x + 10, item_y + 10, ssid_label, label_color);
             if (ctx->networks[i].connected) {
                 draw_text(ctx, item_x + 10, item_y + 35, "[Connected]", CDE_SUCCESS_COLOR);
             }
