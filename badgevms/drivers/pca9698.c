@@ -90,7 +90,7 @@ device_t *pca9698_create(uint8_t i2c_address) {
         return NULL;
     }
 
-    i2c_device_t *i2c_dev = ((i2c_bus_device_t *)bus)->_device_create(bus, i2c_address, 1000000);
+    i2c_device_t *i2c_dev = ((i2c_bus_device_t *)bus)->_device_create(bus, i2c_address, 400000);
     if (!i2c_dev) {
         ESP_LOGE(TAG, "Failed to create I2C device at 0x%02x", i2c_address);
         free(d);
