@@ -299,7 +299,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
         return SDL_APP_FAILURE;
     }
 
-    s->window = SDL_CreateWindow("LED Matrix v1", SCREEN_WIDTH, SCREEN_HEIGHT, 0);
+    s->window = SDL_CreateWindow("LED Matrix v1", SCREEN_WIDTH, SCREEN_HEIGHT, SDL_WINDOW_FULLSCREEN);
     if (!s->window) {
         SDL_Log("SDL_CreateWindow failed: %s", SDL_GetError());
         return SDL_APP_FAILURE;
