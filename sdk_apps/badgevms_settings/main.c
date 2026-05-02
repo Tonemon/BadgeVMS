@@ -1505,6 +1505,45 @@ static void draw_password_dialog(app_context *ctx) {
     );
 }
 
+static void draw_hidden_ssid_dialog(app_context *ctx) {
+    int dialog_w = 600;
+    int dialog_h = 300;
+    int dialog_x = (SCREEN_WIDTH - dialog_w) / 2;
+    int dialog_y = (SCREEN_HEIGHT - dialog_h) / 2;
+
+    draw_rect(ctx, dialog_x + 5, dialog_y + 5, dialog_w, dialog_h, 0x505050);
+    draw_rect(ctx, dialog_x, dialog_y, dialog_w, dialog_h, CDE_PANEL_COLOR);
+    draw_3d_border(ctx, dialog_x, dialog_y, dialog_w, dialog_h, 0);
+
+    int title_h = 30;
+    draw_rect(ctx, dialog_x + 2, dialog_y + 2, dialog_w - 4, title_h, CDE_TITLE_BG);
+    draw_text_bold(ctx, dialog_x + 10, dialog_y + 8, "Connect to Hidden Network", CDE_SELECTED_TEXT);
+
+    draw_text(ctx, dialog_x + 20, dialog_y + title_h + 25, "Network Name (SSID):", CDE_TEXT_COLOR);
+
+    int field_x = dialog_x + 20;
+    int field_y = dialog_y + title_h + 60;
+    int field_w = dialog_w - 40;
+    int field_h = 35;
+
+    draw_rect(ctx, field_x, field_y, field_w, field_h, 0xFFFFFF);
+    draw_3d_border(ctx, field_x, field_y, field_w, field_h, 1);
+    draw_text(ctx, field_x + 5, field_y + 7, ctx->hidden_ssid, CDE_TEXT_COLOR);
+
+    int cursor_x = field_x + 5 + get_text_width(ctx->hidden_ssid);
+    if (SDL_GetTicks() % 1000 < 500)
+        draw_rect(ctx, cursor_x, field_y + 7, 2, FONT_HEIGHT, CDE_TEXT_COLOR);
+
+    draw_text_centered(
+        ctx,
+        dialog_x,
+        dialog_y + dialog_h - 60,
+        dialog_w,
+        "ENTER: Next  ESC: Cancel",
+        CDE_INACTIVE_TEXT
+    );
+}
+
 static void draw_about_dialog(app_context *ctx) {
     int dialog_w = 640;
     int dialog_h = 460;
