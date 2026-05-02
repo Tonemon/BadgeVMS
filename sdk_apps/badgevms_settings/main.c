@@ -1466,7 +1466,9 @@ static void draw_password_dialog(app_context *ctx) {
     draw_text_bold(ctx, dialog_x + 10, dialog_y + 8, "Enter WiFi Password", CDE_SELECTED_TEXT);
 
     char ssid_text[128];
-    snprintf(ssid_text, sizeof(ssid_text), "Network: %s", ctx->networks[ctx->selected_network].ssid);
+    snprintf(ssid_text, sizeof(ssid_text), "Network: %s",
+             ctx->is_hidden_connection ? ctx->hidden_ssid
+                                       : ctx->networks[ctx->selected_network].ssid);
     draw_text(ctx, dialog_x + 20, dialog_y + title_h + 25, ssid_text, CDE_TEXT_COLOR);
 
     int field_x = dialog_x + 20;
@@ -1594,43 +1596,48 @@ static void draw_about_dialog(app_context *ctx) {
 }
 
 static void attempt_wifi_connection(app_context *ctx) {
-    strcpy(ctx->connecting_ssid, ctx->networks[ctx->selected_network].ssid);
-    ctx->connecting_secured = ctx->networks[ctx->selected_network].secured;
+    const char *ssid;
+    if (ctx->is_hidden_connection) {
+        ssid = ctx->hidden_ssid;
+        ctx->connecting_secured = true;
+    } else {
+        ssid = ctx->networks[ctx->selected_network].ssid;
+        ctx->connecting_secured = ctx->networks[ctx->selected_network].secured;
+    }
+    strcpy(ctx->connecting_ssid, ssid);
 
     ctx->show_password_dialog   = false;
     ctx->show_connecting_dialog = true;
     render_screen(ctx);
 
     wifi_disconnect();
-    wifi_set_connection_parameters(
-        ctx->networks[ctx->selected_network].ssid,
-        ctx->networks[ctx->selected_network].secured ? ctx->password_buffer : ""
-    );
+    wifi_set_connection_parameters(ssid, ctx->connecting_secured ? ctx->password_buffer : "");
     wifi_connection_status_t result = wifi_connect();
 
     switch (result) {
         case WIFI_CONNECTED:
-            for (int i = 0; i < ctx->network_count; i++) {
-                ctx->networks[i].connected = (i == ctx->selected_network);
-            }
+            for (int i = 0; i < ctx->network_count; i++)
+                ctx->networks[i].connected = false;
+            snprintf(ctx->connection_status_text, sizeof(ctx->connection_status_text), "Connected");
             break;
-
         case WIFI_ERROR_WRONG_CREDENTIALS:
-            snprintf(ctx->connection_status_text, sizeof(ctx->connection_status_text), "Not connected, wrong password");
+            snprintf(ctx->connection_status_text, sizeof(ctx->connection_status_text),
+                     "Not connected, wrong password");
             break;
-
         case WIFI_ERROR:
         case WIFI_DISCONNECTED:
-        default: snprintf(ctx->connection_status_text, sizeof(ctx->connection_status_text), "Connection failed"); break;
+        default:
+            snprintf(ctx->connection_status_text, sizeof(ctx->connection_status_text),
+                     "Connection failed");
+            break;
     }
 
     memset(ctx->password_buffer, 0, sizeof(ctx->password_buffer));
     ctx->password_cursor        = 0;
     ctx->show_connecting_dialog = false;
-
-    ctx->current_screen = SCREEN_WIFI;
-
-    ctx->network_count = 0;
+    ctx->is_hidden_connection   = false;
+    ctx->current_screen         = SCREEN_WIFI;
+    ctx->network_count          = 0;
 }
 
 static void handle_key_reorder(app_context *ctx, SDL_Event *event) {
