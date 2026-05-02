@@ -90,7 +90,7 @@ device_t *pca9698_create(uint8_t i2c_address) {
         return NULL;
     }
 
-    i2c_device_t *i2c_dev = ((i2c_bus_device_t *)bus)->_device_create(bus, i2c_address, 400000);
+    i2c_device_t *i2c_dev = ((i2c_bus_device_t *)bus)->_device_create(bus, i2c_address, 1000000);
     if (!i2c_dev) {
         ESP_LOGE(TAG, "Failed to create I2C device at 0x%02x", i2c_address);
         free(d);
@@ -105,9 +105,10 @@ device_t *pca9698_create(uint8_t i2c_address) {
         ESP_LOGE(TAG, "Failed to configure IOC registers");
     }
 
-    /* Clear all outputs */
-    if (i2c_dev->device._write(i2c_dev, PCA9698_REG_OP0 | PCA9698_AI, zeros, 5) < 0) {
-        ESP_LOGE(TAG, "Failed to clear OP registers");
+    /* PA banks (0-2) = all HIGH (columns off), PB banks (3-4) = all LOW (rows off) */
+    uint8_t init_op[5] = {0xFF, 0xFF, 0xFF, 0x00, 0x00};
+    if (i2c_dev->device._write(i2c_dev, PCA9698_REG_OP0 | PCA9698_AI, init_op, 5) < 0) {
+        ESP_LOGE(TAG, "Failed to init OP registers");
     }
 
     d->device.type    = DEVICE_TYPE_LED_MATRIX;
