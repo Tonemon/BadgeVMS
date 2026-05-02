@@ -14,6 +14,7 @@ idf_component_register(
      "drivers/esp-serial-flasher/slave_c6_flasher.c"
      "drivers/esp-serial-flasher/why2025_firmware.c"
      "drivers/fatfs.c"
+     "drivers/pca9698.c"
      "drivers/socket.c"
      "drivers/st7703.c"
      "drivers/tca8418.c"

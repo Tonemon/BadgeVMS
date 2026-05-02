@@ -1,7 +1,8 @@
 {
   "items": [
-    { "type": "app",    "uid": "why2025_namebadge" },
-    { "type": "app",    "uid": "why2025_sponsors" },
+    { "type": "app", "uid": "why2025_namebadge" },
+    { "type": "app", "uid": "why2025_sponsors" },
+    { "type": "app", "uid": "led_matrix_v1" },
     { "type": "folder", "name": "Games",       "apps": [
         "random_emu_game", "nes_launcher", "nes_emu", "gb_launcher",
         "gb_emu", "sms_launcher", "sms_emu",
