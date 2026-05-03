@@ -141,6 +141,7 @@ typedef struct {
     bool autorotate;
     bool mac_randomization;
     int  boot_animation;   /* 0 = splash, 1 = terminal */
+    bool wifi_enabled;
 
     /* Generic text input dialog */
     bool  show_text_input_dialog;
@@ -333,11 +334,12 @@ static const uint16_t ICON_GEAR[ICON_ART] = {
 };
 
 static const uint16_t * const SETTINGS_ICONS[] = {
-    ICON_WIFI, ICON_PERSON, ICON_MONITOR, ICON_TERMINAL,
-    ICON_EYE,  ICON_ROTATE, ICON_LIST,   ICON_HOUSE, ICON_INFO,
+    ICON_WIFI, ICON_WIFI, ICON_PERSON, ICON_MONITOR, ICON_TERMINAL,
+    ICON_EYE,  ICON_ROTATE, ICON_LIST, ICON_HOUSE, ICON_INFO,
 };
 static const uint32_t SETTINGS_ICON_COLORS[] = {
-    0x0070C0,  /* WiFi           – blue         */
+    0x0070C0,  /* WiFi toggle    – blue         */
+    0x0070C0,  /* WiFi Network   – blue         */
     0x804090,  /* Person         – purple       */
     0x206080,  /* Monitor        – steel blue   */
     0x208020,  /* Terminal       – terminal grn */
@@ -937,6 +939,7 @@ static void launcher_config_load(app_context *ctx) {
     ctx->autorotate               = true;
     ctx->mac_randomization        = false;
     ctx->boot_animation           = 0;
+    ctx->wifi_enabled             = true;
 
     FILE *f = fopen("APPS:[badgevms_launcher]config.json", "r");
     if (!f) return;
@@ -962,6 +965,7 @@ static void launcher_config_load(app_context *ctx) {
     cJSON *ar   = cJSON_GetObjectItem(cfg, "autorotate");
     cJSON *mr   = cJSON_GetObjectItem(cfg, "mac_randomization");
     cJSON *ba   = cJSON_GetObjectItem(cfg, "boot_animation");
+    cJSON *we   = cJSON_GetObjectItem(cfg, "wifi_enabled");
     if (cJSON_IsBool(lda))
         ctx->launch_default_app = cJSON_IsTrue(lda);
     if (cJSON_IsString(da) && da->valuestring)
@@ -979,6 +983,8 @@ static void launcher_config_load(app_context *ctx) {
         ctx->mac_randomization = cJSON_IsTrue(mr);
     if (cJSON_IsNumber(ba))
         ctx->boot_animation = (int)cJSON_GetNumberValue(ba);
+    if (cJSON_IsBool(we))
+        ctx->wifi_enabled = cJSON_IsTrue(we);
     cJSON_Delete(cfg);
 
     /* Resolve display name by walking the installed app list.
@@ -1006,6 +1012,7 @@ static void launcher_config_load(app_context *ctx) {
 
     wifi_set_hostname(ctx->hostname);
     wifi_set_mac_randomization(ctx->mac_randomization);
+    wifi_set_enabled(ctx->wifi_enabled);
 }
 
 static void launcher_config_save(app_context *ctx) {
@@ -1019,6 +1026,7 @@ static void launcher_config_save(app_context *ctx) {
     cJSON_AddBoolToObject(cfg,   "autorotate",               ctx->autorotate);
     cJSON_AddBoolToObject(cfg,   "mac_randomization",        ctx->mac_randomization);
     cJSON_AddNumberToObject(cfg, "boot_animation",           ctx->boot_animation);
+    cJSON_AddBoolToObject(cfg,   "wifi_enabled",             ctx->wifi_enabled);
     char *json_str = cJSON_Print(cfg);
     cJSON_Delete(cfg);
     if (!json_str) return;
@@ -1143,7 +1151,8 @@ static void draw_main_settings(app_context *ctx) {
     draw_text_bold(ctx, window_x + 15, window_y + 11, "System Settings", CDE_SELECTED_TEXT);
 
     char const *categories[]   = {
-        "WiFi Settings",
+        "WiFi",
+        "WiFi Network",
         "Badge owner name",
         "Hostname",
         "Boot animation",
@@ -1155,6 +1164,7 @@ static void draw_main_settings(app_context *ctx) {
         "About"
     };
     char const *descriptions[] = {
+        "Enable or disable wireless networking",
         "Configure wireless network connection",
         "Your name displayed at boot and in apps",
         "Network hostname of this badge",
@@ -1166,7 +1176,7 @@ static void draw_main_settings(app_context *ctx) {
         "The application launched at boot",
         "Badge specifications"
     };
-    ctx->total_items = 10;
+    ctx->total_items = 11;
 
     int list_y      = window_y + title_h + 20;
     int list_h      = window_h - title_h - 80;
@@ -1215,15 +1225,33 @@ static void draw_main_settings(app_context *ctx) {
 
         uint32_t val_color = (i == ctx->selected_item) ? CDE_SELECTED_TEXT : CDE_INACTIVE_TEXT;
 
-        if (i == 1) { /* Badge owner name: right-aligned current value */
+        if (i == 0) { /* WiFi: inline [ON]/[OFF] toggle */
+            int title_w  = get_text_width(categories[i]);
+            int toggle_x = text_x + title_w + 2 * FONT_WIDTH;
+            const char *toggle_str = ctx->wifi_enabled ? "[ON]" : "[OFF]";
+            uint32_t toggle_color = (i == ctx->selected_item)
+                ? CDE_SELECTED_TEXT
+                : (ctx->wifi_enabled ? CDE_SUCCESS_COLOR : CDE_INACTIVE_TEXT);
+            draw_text_bold(ctx, toggle_x, item_y + 12, toggle_str, toggle_color);
+        } else if (i == 1) { /* WiFi Network: right-aligned connected SSID */
+            wifi_station_handle sta = wifi_get_connection_station();
+            if (sta) {
+                const char *ssid = wifi_station_get_ssid(sta);
+                if (ssid && ssid[0]) {
+                    int val_x = item_x + item_w - get_text_width(ssid) - 15;
+                    draw_text(ctx, val_x, item_y + 12, ssid, val_color);
+                }
+                wifi_scan_free_station(sta);
+            }
+        } else if (i == 2) { /* Badge owner name: right-aligned current value */
             const char *val = ctx->badge_owner_name[0] ? ctx->badge_owner_name : "(not set)";
             int val_x = item_x + item_w - get_text_width(val) - 15;
             draw_text(ctx, val_x, item_y + 12, val, val_color);
-        } else if (i == 2) { /* Hostname: right-aligned current value */
+        } else if (i == 3) { /* Hostname: right-aligned current value */
             const char *val = ctx->hostname[0] ? ctx->hostname : "(not set)";
             int val_x = item_x + item_w - get_text_width(val) - 15;
             draw_text(ctx, val_x, item_y + 12, val, val_color);
-        } else if (i == 3) { /* Boot animation: inline [SPLASH]/[TERMINAL]/[BOTH] cycle */
+        } else if (i == 4) { /* Boot animation: inline [SPLASH]/[TERMINAL]/[BOTH] cycle */
             static const char * const anim_names[] = { "SPLASH", "TERMINAL", "BOTH" };
             int idx = (ctx->boot_animation >= 0 && ctx->boot_animation <= 2)
                       ? ctx->boot_animation : 0;
@@ -1234,7 +1262,7 @@ static void draw_main_settings(app_context *ctx) {
             uint32_t toggle_color = (i == ctx->selected_item)
                 ? CDE_SELECTED_TEXT : CDE_INACTIVE_TEXT;
             draw_text_bold(ctx, toggle_x, item_y + 12, toggle_str, toggle_color);
-        } else if (i == 4) { /* Display username at boot: inline [ON]/[OFF] */
+        } else if (i == 5) { /* Display username at boot: inline [ON]/[OFF] */
             int title_w    = get_text_width(categories[i]);
             int toggle_x   = text_x + title_w + 2 * FONT_WIDTH;
             const char *toggle_str = ctx->display_username_at_boot ? "[ON]" : "[OFF]";
@@ -1242,7 +1270,7 @@ static void draw_main_settings(app_context *ctx) {
                 ? CDE_SELECTED_TEXT
                 : (ctx->display_username_at_boot ? CDE_SUCCESS_COLOR : CDE_INACTIVE_TEXT);
             draw_text_bold(ctx, toggle_x, item_y + 12, toggle_str, toggle_color);
-        } else if (i == 5) { /* Autorotate: inline [ON]/[OFF] */
+        } else if (i == 6) { /* Autorotate: inline [ON]/[OFF] */
             int title_w    = get_text_width(categories[i]);
             int toggle_x   = text_x + title_w + 2 * FONT_WIDTH;
             const char *toggle_str = ctx->autorotate ? "[ON]" : "[OFF]";
@@ -1250,7 +1278,7 @@ static void draw_main_settings(app_context *ctx) {
                 ? CDE_SELECTED_TEXT
                 : (ctx->autorotate ? CDE_SUCCESS_COLOR : CDE_INACTIVE_TEXT);
             draw_text_bold(ctx, toggle_x, item_y + 12, toggle_str, toggle_color);
-        } else if (i == 6) { /* MAC randomization: inline [ON]/[OFF] */
+        } else if (i == 7) { /* MAC randomization: inline [ON]/[OFF] */
             int title_w    = get_text_width(categories[i]);
             int toggle_x   = text_x + title_w + 2 * FONT_WIDTH;
             const char *toggle_str = ctx->mac_randomization ? "[ON]" : "[OFF]";
@@ -1258,7 +1286,7 @@ static void draw_main_settings(app_context *ctx) {
                 ? CDE_SELECTED_TEXT
                 : (ctx->mac_randomization ? CDE_SUCCESS_COLOR : CDE_INACTIVE_TEXT);
             draw_text_bold(ctx, toggle_x, item_y + 12, toggle_str, toggle_color);
-        } else if (i == 8) { /* Default app: inline [ON]/[OFF] + right-aligned app name */
+        } else if (i == 9) { /* Default app: inline [ON]/[OFF] + right-aligned app name */
             int title_w    = get_text_width(categories[i]);
             int toggle_x   = text_x + title_w + 2 * FONT_WIDTH;
             const char *toggle_str = ctx->launch_default_app ? "[ON]" : "[OFF]";
@@ -2105,13 +2133,18 @@ static void handle_key_event(app_context *ctx, SDL_Event *event) {
                 }
             } else if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
                 switch (ctx->selected_item) {
-                    case 0:
+                    case 0: /* WiFi: toggle on/off */
+                        ctx->wifi_enabled = !ctx->wifi_enabled;
+                        wifi_set_enabled(ctx->wifi_enabled);
+                        launcher_config_save(ctx);
+                        break;
+                    case 1: /* WiFi Network: navigate to WiFi screen */
                         nav_push(ctx, SCREEN_WIFI);
                         ctx->network_count = 0;
                         ctx->scanning      = true;
                         wifi_scan_start();
                         break;
-                    case 1: /* Badge owner name: open text input */
+                    case 2: /* Badge owner name: open text input */
                         strncpy(ctx->text_input_title, "Badge Owner Name",
                                 sizeof(ctx->text_input_title) - 1);
                         strncpy(ctx->text_input_buffer, ctx->badge_owner_name,
@@ -2121,7 +2154,7 @@ static void handle_key_event(app_context *ctx, SDL_Event *event) {
                         ctx->text_input_max_len = (int)(sizeof(ctx->badge_owner_name) - 1);
                         ctx->show_text_input_dialog = true;
                         break;
-                    case 2: /* Hostname: open text input */
+                    case 3: /* Hostname: open text input */
                         strncpy(ctx->text_input_title, "Hostname",
                                 sizeof(ctx->text_input_title) - 1);
                         strncpy(ctx->text_input_buffer, ctx->hostname,
@@ -2131,47 +2164,51 @@ static void handle_key_event(app_context *ctx, SDL_Event *event) {
                         ctx->text_input_max_len = (int)(sizeof(ctx->hostname) - 1);
                         ctx->show_text_input_dialog = true;
                         break;
-                    case 3: /* Boot animation: cycle SPLASH → TERMINAL → BOTH → SPLASH */
+                    case 4: /* Boot animation: cycle SPLASH → TERMINAL → BOTH → SPLASH */
                         ctx->boot_animation = (ctx->boot_animation + 1) % 3;
                         launcher_config_save(ctx);
                         break;
-                    case 4: /* Display username at boot: toggle */
+                    case 5: /* Display username at boot: toggle */
                         ctx->display_username_at_boot = !ctx->display_username_at_boot;
                         launcher_config_save(ctx);
                         break;
-                    case 5: /* Autorotate: toggle */
+                    case 6: /* Autorotate: toggle */
                         ctx->autorotate = !ctx->autorotate;
                         compositor_set_autorotate(ctx->autorotate);
                         launcher_config_save(ctx);
                         break;
-                    case 6: /* MAC randomization: toggle */
+                    case 7: /* MAC randomization: toggle */
                         ctx->mac_randomization = !ctx->mac_randomization;
                         launcher_config_save(ctx);
                         break;
-                    case 7: /* Reorder Apps */
+                    case 8: /* Reorder Apps */
                         reorder_init(ctx);
                         nav_push(ctx, SCREEN_REORDER);
                         break;
-                    case 8: /* Default app: open chooser */
+                    case 9: /* Default app: open chooser */
                         app_chooser_open(ctx);
                         break;
-                    case 9: nav_push(ctx, SCREEN_ABOUT); break;
+                    case 10: nav_push(ctx, SCREEN_ABOUT); break;
                 }
             } else if (key == SDLK_SPACE) {
-                if (ctx->selected_item == 3) {
-                    ctx->boot_animation = (ctx->boot_animation + 1) % 3;
+                if (ctx->selected_item == 0) {
+                    ctx->wifi_enabled = !ctx->wifi_enabled;
+                    wifi_set_enabled(ctx->wifi_enabled);
                     launcher_config_save(ctx);
                 } else if (ctx->selected_item == 4) {
-                    ctx->display_username_at_boot = !ctx->display_username_at_boot;
+                    ctx->boot_animation = (ctx->boot_animation + 1) % 3;
                     launcher_config_save(ctx);
                 } else if (ctx->selected_item == 5) {
+                    ctx->display_username_at_boot = !ctx->display_username_at_boot;
+                    launcher_config_save(ctx);
+                } else if (ctx->selected_item == 6) {
                     ctx->autorotate = !ctx->autorotate;
                     compositor_set_autorotate(ctx->autorotate);
                     launcher_config_save(ctx);
-                } else if (ctx->selected_item == 6) {
+                } else if (ctx->selected_item == 7) {
                     ctx->mac_randomization = !ctx->mac_randomization;
                     launcher_config_save(ctx);
-                } else if (ctx->selected_item == 8) {
+                } else if (ctx->selected_item == 9) {
                     ctx->launch_default_app = !ctx->launch_default_app;
                     launcher_config_save(ctx);
                 }

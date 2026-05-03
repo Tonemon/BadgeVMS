@@ -6,5 +6,6 @@
   "display_username_at_boot": false,
   "autorotate": false,
   "mac_randomization": true,
-  "boot_animation": 2
+  "boot_animation": 2,
+  "wifi_enabled": true
 }

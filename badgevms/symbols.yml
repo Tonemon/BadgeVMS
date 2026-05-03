@@ -944,6 +944,7 @@ simple_function:
   - wifi_scan_get_cached_num_results
   - wifi_scan_get_result
   - wifi_set_connection_parameters
+  - wifi_set_enabled
   - wifi_set_hostname
   - wifi_set_mac_randomization
   - wifi_station_get_bssid

@@ -1086,6 +1086,7 @@ int main(int argc, char *argv[]) {
                         cJSON *bon = cJSON_GetObjectItem(cfg, "badge_owner_name");
                         cJSON *hn  = cJSON_GetObjectItem(cfg, "hostname");
                         cJSON *ba  = cJSON_GetObjectItem(cfg, "boot_animation");
+                        cJSON *we  = cJSON_GetObjectItem(cfg, "wifi_enabled");
                         if (cJSON_IsBool(dub) && cJSON_IsTrue(dub))
                             boot_display_name = true;
                         if (cJSON_IsString(bon) && bon->valuestring)
@@ -1096,6 +1097,8 @@ int main(int argc, char *argv[]) {
                                     sizeof(boot_hostname) - 1);
                         if (cJSON_IsNumber(ba))
                             boot_animation = (int)cJSON_GetNumberValue(ba);
+                        if (cJSON_IsBool(we) && !cJSON_IsTrue(we))
+                            wifi_set_enabled(false);
                         cJSON_Delete(cfg);
                     }
                 }

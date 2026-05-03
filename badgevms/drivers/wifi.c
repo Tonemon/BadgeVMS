@@ -671,6 +671,25 @@ void wifi_set_mac_randomization(bool enabled) {
     }
 }
 
+void wifi_set_enabled(bool enabled) {
+    if (enabled) {
+        if (status.status != WIFI_DISABLED)
+            return;
+        esp_wifi_start();
+        xSemaphoreTake(status.mutex, portMAX_DELAY);
+        status.status = WIFI_ENABLED;
+        xSemaphoreGive(status.mutex);
+    } else {
+        if (status.status == WIFI_DISABLED)
+            return;
+        xSemaphoreTake(status.mutex, portMAX_DELAY);
+        status.connection_status_want = WIFI_DISCONNECTED;
+        status.status                 = WIFI_DISABLED;
+        xSemaphoreGive(status.mutex);
+        esp_wifi_stop();
+    }
+}
+
 void wifi_set_hostname(char const *hostname) {
     if (!hostname || hostname[0] == '\0')
         return;
