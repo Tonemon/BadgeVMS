@@ -17,7 +17,6 @@
 #include "bluetooth_internal.h"
 #include "esp_log.h"
 #include "esp_mac.h"
-#include "esp_random.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
@@ -75,17 +74,23 @@ static void nvs_load(void) {
 }
 
 static void nvs_save_paired(void) {
+    xSemaphoreTake(iris_state.mutex, portMAX_DELAY);
+    int count = iris_state.num_paired;
+    struct bt_device snap[BT_MAX_PAIRED];
+    memcpy(snap, iris_state.paired, count * sizeof(struct bt_device));
+    xSemaphoreGive(iris_state.mutex);
+
     nvs_handle_t h;
     if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
-    nvs_set_u8(h, "paired_count", (uint8_t)iris_state.num_paired);
-    for (int i = 0; i < iris_state.num_paired; i++) {
+    nvs_set_u8(h, "paired_count", (uint8_t)count);
+    for (int i = 0; i < count; i++) {
         char key[24];
         snprintf(key, sizeof(key), "paired_%d_name", i);
-        nvs_set_str(h, key, iris_state.paired[i].name);
+        nvs_set_str(h, key, snap[i].name);
         snprintf(key, sizeof(key), "paired_%d_addr", i);
-        nvs_set_str(h, key, iris_state.paired[i].addr_str);
+        nvs_set_str(h, key, snap[i].addr_str);
         snprintf(key, sizeof(key), "paired_%d_type", i);
-        nvs_set_u8(h, key, (uint8_t)iris_state.paired[i].type);
+        nvs_set_u8(h, key, (uint8_t)snap[i].type);
     }
     nvs_commit(h);
     nvs_close(h);
@@ -168,14 +173,16 @@ bt_status_t bt_get_status(void) {
 
 void bt_set_own_name(const char *name) {
     if (!name || !name[0]) return;
+    char name_copy[sizeof(iris_state.own_name)];
     xSemaphoreTake(iris_state.mutex, portMAX_DELAY);
     strncpy(iris_state.own_name, name, sizeof(iris_state.own_name) - 1);
     iris_state.own_name[sizeof(iris_state.own_name) - 1] = '\0';
+    memcpy(name_copy, iris_state.own_name, sizeof(name_copy));
     xSemaphoreGive(iris_state.mutex);
-    ble_svc_gap_device_name_set(iris_state.own_name);
+    ble_svc_gap_device_name_set(name_copy);
     nvs_handle_t h;
     if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
-        nvs_set_str(h, "own_name", iris_state.own_name);
+        nvs_set_str(h, "own_name", name_copy);
         nvs_commit(h);
         nvs_close(h);
     }
@@ -336,6 +343,9 @@ device_t *bluetooth_create(void) {
     memset(&bt_hid_profile, 0, sizeof(bt_hid_profile));
     memset(&bt_badge_profile, 0, sizeof(bt_badge_profile));
 
+    iris_queue = xQueueCreate(8, sizeof(bt_command_message_t *));
+    create_kernel_task(iris, "Iris", 4096, NULL, 5, &iris_handle, 0);
+
     nimble_port_init();
     ble_hs_cfg.sync_cb = on_ble_sync;
     ble_svc_gap_init();
@@ -345,9 +355,6 @@ device_t *bluetooth_create(void) {
     badge_profile_register_services();
 
     nimble_port_freertos_init(nimble_host_task);
-
-    iris_queue = xQueueCreate(8, sizeof(bt_command_message_t *));
-    create_kernel_task(iris, "Iris", 4096, NULL, 5, &iris_handle, 0);
 
     if (enabled_flag) {
         iris_state.status = BT_ENABLED;
