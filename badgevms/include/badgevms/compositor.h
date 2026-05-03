@@ -83,3 +83,4 @@ void get_screen_info(int *width, int *height, pixel_format_t *format, float *ref
 
 void compositor_set_autorotate(bool enabled);
 bool compositor_get_autorotate(void);
+void compositor_inject_keyboard_event(event_t e);

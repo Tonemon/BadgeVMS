@@ -909,6 +909,7 @@ simple_function:
   - get_mac_address
   - get_num_tasks
   - compositor_get_autorotate
+  - compositor_inject_keyboard_event
   - compositor_set_autorotate
   - get_screen_info
   - mkdir_p
