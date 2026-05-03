@@ -1404,6 +1404,6 @@ bool compositor_get_autorotate(void) {
 void compositor_inject_keyboard_event(event_t e) {
     if (!window_stack) return;
     if (xQueueSend(window_stack->event_queue, &e, 0) != pdTRUE) {
-        ESP_LOGW("COMPOSITOR", "BLE key event dropped: queue full");
+        ESP_LOGW(TAG, "BLE key event dropped: queue full");
     }
 }
