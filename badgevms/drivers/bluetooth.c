@@ -96,6 +96,16 @@ static void nvs_save_paired(void) {
     nvs_close(h);
 }
 
+static const ble_uuid128_t badge_svc_uuid = BLE_UUID128_INIT(
+    0xF0, 0xDE, 0xBC, 0x9A, 0x78, 0x56, 0x34, 0x12,
+    0xF0, 0xDE, 0xBC, 0x9A, 0x78, 0x56, 0x34, 0x12
+);
+static const ble_uuid128_t badge_msg_chr_uuid = BLE_UUID128_INIT(
+    0xF1, 0xDE, 0xBC, 0x9A, 0x78, 0x56, 0x34, 0x12,
+    0xF0, 0xDE, 0xBC, 0x9A, 0x78, 0x56, 0x34, 0x12
+);
+static uint16_t badge_msg_chr_handle;
+
 static void iris_do_scan(void);
 static void iris_do_connect(bt_command_message_t *cmd);
 static void iris_do_disconnect(bt_command_message_t *cmd);
@@ -140,11 +150,22 @@ static void send_command_sync(bt_command_t command, void *arg) {
     ulTaskNotifyTakeIndexed(0, pdTRUE, portMAX_DELAY);
 }
 
-/* Stub implementations — filled in by later tasks */
+/* Stubs for iris_do_scan/connect/disconnect — filled in by Task 8 */
 static void iris_do_scan(void) {}
 static void iris_do_connect(bt_command_message_t *cmd) { (void)cmd; }
 static void iris_do_disconnect(bt_command_message_t *cmd) { (void)cmd; }
-static void iris_do_send_message(bt_command_message_t *cmd) { (void)cmd; }
+
+static void iris_do_send_message(bt_command_message_t *cmd) {
+    if (!cmd->arg) return;
+    typedef struct { bt_device_handle dev; size_t len; char msg[BT_MSG_MAX_LEN]; } send_arg_t;
+    send_arg_t *a = cmd->arg;
+    if (a->dev->conn_handle == BLE_HS_CONN_HANDLE_NONE) { free(a); return; }
+    struct os_mbuf *om = ble_hs_mbuf_from_flat(a->msg, a->len);
+    if (om) {
+        ble_gattc_notify_custom(a->dev->conn_handle, badge_msg_chr_handle, om);
+    }
+    free(a);
+}
 
 void bt_set_enabled(bool enabled) {
     xSemaphoreTake(iris_state.mutex, portMAX_DELAY);
@@ -297,7 +318,75 @@ static ssize_t bt_dev_write(void *dev, int fd, void const *buf, size_t n) { (voi
 static ssize_t bt_dev_read(void *dev, int fd, void *buf, size_t n) { (void)dev; (void)fd; (void)buf; (void)n; return 0; }
 static ssize_t bt_dev_lseek(void *dev, int fd, off_t off, int w) { (void)dev; (void)fd; (void)off; (void)w; return (off_t)-1; }
 
-static void on_ble_sync(void);  /* defined in Task 6 — forward declaration */
+static int badge_msg_chr_access_cb(
+    uint16_t conn_handle, uint16_t attr_handle,
+    struct ble_gatt_access_ctxt *ctxt, void *arg)
+{
+    (void)attr_handle; (void)arg;
+    if (ctxt->op != BLE_GATT_ACCESS_OP_WRITE_CHR) return 0;
+    uint16_t len = OS_MBUF_PKTLEN(ctxt->om);
+    if (len > BT_MSG_MAX_LEN) len = BT_MSG_MAX_LEN;
+    uint8_t buf[BT_MSG_MAX_LEN];
+    ble_hs_mbuf_to_flat(ctxt->om, buf, len, NULL);
+    xSemaphoreTake(iris_state.mutex, portMAX_DELAY);
+    for (int i = 0; i < iris_state.num_paired; i++) {
+        if (iris_state.paired[i].conn_handle == conn_handle) {
+            xSemaphoreGive(iris_state.mutex);
+            if (bt_badge_profile.on_data)
+                bt_badge_profile.on_data(&iris_state.paired[i], buf, len);
+            return 0;
+        }
+    }
+    xSemaphoreGive(iris_state.mutex);
+    return 0;
+}
+
+static const struct ble_gatt_svc_def badge_gatt_svcs[] = {
+    {
+        .type            = BLE_GATT_SVC_TYPE_PRIMARY,
+        .uuid            = &badge_svc_uuid.u,
+        .characteristics = (struct ble_gatt_chr_def[]){
+            {
+                .uuid       = &badge_msg_chr_uuid.u,
+                .access_cb  = badge_msg_chr_access_cb,
+                .flags      = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_NOTIFY,
+                .val_handle = &badge_msg_chr_handle,
+            },
+            { 0 },
+        },
+    },
+    { 0 },
+};
+
+void badge_profile_register_services(void) {
+    ble_gatts_count_cfg(badge_gatt_svcs);
+    ble_gatts_add_svcs(badge_gatt_svcs);
+}
+
+static void badge_profile_start_advertising(void) {
+    struct ble_hs_adv_fields fields = {0};
+    fields.flags                = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
+    fields.name                 = (uint8_t *)iris_state.own_name;
+    fields.name_len             = strlen(iris_state.own_name);
+    fields.name_is_complete     = 1;
+    fields.uuids128             = &badge_svc_uuid;
+    fields.num_uuids128         = 1;
+    fields.uuids128_is_complete = 1;
+    ble_gap_adv_set_fields(&fields);
+
+    struct ble_gap_adv_params adv_params = {0};
+    adv_params.conn_mode = BLE_GAP_CONN_MODE_UND;
+    adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;
+    ble_gap_adv_start(BLE_OWN_ADDR_PUBLIC, NULL, BLE_HS_FOREVER,
+                      &adv_params, NULL, NULL);
+}
+
+static void on_ble_sync(void) {
+    ble_hs_id_infer_auto(0, &(uint8_t){0});
+    ble_svc_gap_device_name_set(iris_state.own_name);
+    if (iris_state.status == BT_ENABLED)
+        badge_profile_start_advertising();
+}
 
 static void nimble_host_task(void *param) {
     (void)param;
@@ -363,7 +452,3 @@ device_t *bluetooth_create(void) {
     return base;
 }
 
-/* Stub for on_ble_sync — will be replaced in Task 6 */
-static void on_ble_sync(void) {
-    ESP_LOGW(TAG, "BLE sync — badge advertising will be added in Task 6");
-}
