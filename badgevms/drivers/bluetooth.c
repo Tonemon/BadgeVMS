@@ -114,6 +114,7 @@ static void iris_do_connect(bt_command_message_t *cmd);
 static void iris_do_disconnect(bt_command_message_t *cmd);
 static void iris_do_send_message(bt_command_message_t *cmd);
 static void hid_handle_notify_rx(uint16_t conn_handle, struct os_mbuf *om);
+static int iris_gap_event(struct ble_gap_event *event, void *arg);
 
 static void iris(void *ignored) {
     ESP_LOGW("IRIS", "Starting");
@@ -154,10 +155,183 @@ static void send_command_sync(bt_command_t command, void *arg) {
     ulTaskNotifyTakeIndexed(0, pdTRUE, portMAX_DELAY);
 }
 
-/* Stubs for iris_do_scan/connect/disconnect — filled in by Task 8 */
-static void iris_do_scan(void) {}
-static void iris_do_connect(bt_command_message_t *cmd) { (void)cmd; }
-static void iris_do_disconnect(bt_command_message_t *cmd) { (void)cmd; }
+static bt_device_type_t classify_adv_fields(const struct ble_hs_adv_fields *fields) {
+    for (int i = 0; i < fields->num_uuids16; i++) {
+        if (ble_uuid_u16(&fields->uuids16[i].u) == 0x1812)
+            return BT_DEVICE_KEYBOARD;
+    }
+    for (int i = 0; i < fields->num_uuids128; i++) {
+        if (memcmp(&fields->uuids128[i], &badge_svc_uuid, sizeof(ble_uuid128_t)) == 0)
+            return BT_DEVICE_BADGE;
+    }
+    return BT_DEVICE_UNKNOWN;
+}
+
+static void addr_to_str(const ble_addr_t *addr, char *out) {
+    snprintf(out, 18, "%02X:%02X:%02X:%02X:%02X:%02X",
+             addr->val[5], addr->val[4], addr->val[3],
+             addr->val[2], addr->val[1], addr->val[0]);
+}
+
+static int iris_gap_event(struct ble_gap_event *event, void *arg) {
+    (void)arg;
+    switch (event->type) {
+
+    case BLE_GAP_EVENT_DISC: {
+        struct ble_hs_adv_fields fields;
+        if (ble_hs_adv_parse_fields(&fields, event->disc.data,
+                                    event->disc.length_data) != 0)
+            break;
+        xSemaphoreTake(iris_state.mutex, portMAX_DELAY);
+        if (iris_state.num_scan_results < BT_MAX_SCAN_RESULTS) {
+            struct bt_device *d = &iris_state.scan_results[iris_state.num_scan_results];
+            memset(d, 0, sizeof(*d));
+            d->addr        = event->disc.addr;
+            addr_to_str(&event->disc.addr, d->addr_str);
+            d->type        = classify_adv_fields(&fields);
+            d->conn_handle = BLE_HS_CONN_HANDLE_NONE;
+            d->conn_status = BT_DISCONNECTED;
+            if (fields.name_len) {
+                size_t n = fields.name_len < sizeof(d->name) - 1
+                           ? fields.name_len : sizeof(d->name) - 1;
+                memcpy(d->name, fields.name, n);
+            }
+            iris_state.num_scan_results++;
+            if (bt_hid_profile.on_device_found)
+                bt_hid_profile.on_device_found(d);
+            if (bt_badge_profile.on_device_found)
+                bt_badge_profile.on_device_found(d);
+        }
+        xSemaphoreGive(iris_state.mutex);
+        break;
+    }
+
+    case BLE_GAP_EVENT_DISC_COMPLETE:
+        xEventGroupSetBits(iris_state.event_group, BT_SCAN_DONE_BIT);
+        break;
+
+    case BLE_GAP_EVENT_CONNECT: {
+        if (event->connect.status != 0) {
+            xEventGroupSetBits(iris_state.event_group, BT_DISCONNECTED_BIT);
+            break;
+        }
+        uint16_t conn_handle = event->connect.conn_handle;
+        xSemaphoreTake(iris_state.mutex, portMAX_DELAY);
+        for (int i = 0; i < iris_state.num_paired; i++) {
+            if (iris_state.paired[i].conn_status == BT_CONNECTING) {
+                iris_state.paired[i].conn_handle = conn_handle;
+                iris_state.paired[i].conn_status = BT_CONNECTED;
+                struct bt_device *d = &iris_state.paired[i];
+                xSemaphoreGive(iris_state.mutex);
+                if (d->type == BT_DEVICE_KEYBOARD && bt_hid_profile.on_connected)
+                    bt_hid_profile.on_connected(d);
+                else if (d->type == BT_DEVICE_BADGE && bt_badge_profile.on_connected)
+                    bt_badge_profile.on_connected(d);
+                xEventGroupSetBits(iris_state.event_group, BT_CONNECTED_BIT);
+                return 0;
+            }
+        }
+        xSemaphoreGive(iris_state.mutex);
+        xEventGroupSetBits(iris_state.event_group, BT_CONNECTED_BIT);
+        break;
+    }
+
+    case BLE_GAP_EVENT_NOTIFY_RX:
+        hid_handle_notify_rx(event->notify_rx.conn_handle, event->notify_rx.om);
+        break;
+
+    case BLE_GAP_EVENT_DISCONNECT: {
+        uint16_t conn_handle = event->disconnect.conn.conn_handle;
+        xSemaphoreTake(iris_state.mutex, portMAX_DELAY);
+        for (int i = 0; i < iris_state.num_paired; i++) {
+            if (iris_state.paired[i].conn_handle == conn_handle) {
+                iris_state.paired[i].conn_handle = BLE_HS_CONN_HANDLE_NONE;
+                iris_state.paired[i].conn_status = BT_DISCONNECTED;
+                struct bt_device *d = &iris_state.paired[i];
+                xSemaphoreGive(iris_state.mutex);
+                if (d->type == BT_DEVICE_KEYBOARD && bt_hid_profile.on_disconnected)
+                    bt_hid_profile.on_disconnected(d);
+                else if (d->type == BT_DEVICE_BADGE && bt_badge_profile.on_disconnected)
+                    bt_badge_profile.on_disconnected(d);
+                xEventGroupSetBits(iris_state.event_group, BT_DISCONNECTED_BIT);
+                return 0;
+            }
+        }
+        xSemaphoreGive(iris_state.mutex);
+        xEventGroupSetBits(iris_state.event_group, BT_DISCONNECTED_BIT);
+        break;
+    }
+
+    }
+    return 0;
+}
+
+static void iris_do_scan(void) {
+    if (iris_state.status == BT_DISABLED) return;
+    xSemaphoreTake(iris_state.mutex, portMAX_DELAY);
+    iris_state.num_scan_results = 0;
+    xSemaphoreGive(iris_state.mutex);
+
+    ble_gap_disc_cancel();
+
+    struct ble_gap_disc_params disc_params = {0};
+    disc_params.passive    = 0;
+    disc_params.filter_dup = 1;
+
+    xEventGroupClearBits(iris_state.event_group, BT_SCAN_DONE_BIT);
+    ble_gap_disc(BLE_OWN_ADDR_PUBLIC, 3000, &disc_params, iris_gap_event, NULL);
+    xEventGroupWaitBits(iris_state.event_group, BT_SCAN_DONE_BIT,
+                        pdTRUE, pdFALSE, pdMS_TO_TICKS(4000));
+    ESP_LOGI(TAG, "Scan complete: %d devices", iris_state.num_scan_results);
+}
+
+static void iris_do_connect(bt_command_message_t *cmd) {
+    if (!cmd->arg) return;
+    struct bt_device *target = cmd->arg;
+
+    xSemaphoreTake(iris_state.mutex, portMAX_DELAY);
+    bool found = false;
+    for (int i = 0; i < iris_state.num_paired; i++) {
+        if (strcmp(iris_state.paired[i].addr_str, target->addr_str) == 0) {
+            iris_state.paired[i].conn_status = BT_CONNECTING;
+            found = true;
+            break;
+        }
+    }
+    if (!found && iris_state.num_paired < BT_MAX_PAIRED) {
+        memcpy(&iris_state.paired[iris_state.num_paired], target, sizeof(struct bt_device));
+        iris_state.paired[iris_state.num_paired].conn_status = BT_CONNECTING;
+        iris_state.num_paired++;
+        xSemaphoreGive(iris_state.mutex);
+        nvs_save_paired();
+    } else {
+        xSemaphoreGive(iris_state.mutex);
+    }
+
+    ble_gap_adv_stop();
+    xEventGroupClearBits(iris_state.event_group, BT_CONNECTED_BIT | BT_DISCONNECTED_BIT);
+    ble_gap_connect(BLE_OWN_ADDR_PUBLIC, &target->addr, 10000, NULL, iris_gap_event, NULL);
+    xEventGroupWaitBits(iris_state.event_group, BT_CONNECTED_BIT | BT_DISCONNECTED_BIT,
+                        pdTRUE, pdFALSE, pdMS_TO_TICKS(11000));
+    if (iris_state.status == BT_ENABLED)
+        badge_profile_start_advertising();
+}
+
+static void iris_do_disconnect(bt_command_message_t *cmd) {
+    if (!cmd->arg) return;
+    struct bt_device *target = cmd->arg;
+    xSemaphoreTake(iris_state.mutex, portMAX_DELAY);
+    for (int i = 0; i < iris_state.num_paired; i++) {
+        if (strcmp(iris_state.paired[i].addr_str, target->addr_str) == 0) {
+            uint16_t h = iris_state.paired[i].conn_handle;
+            xSemaphoreGive(iris_state.mutex);
+            if (h != BLE_HS_CONN_HANDLE_NONE)
+                ble_gap_terminate(h, BLE_ERR_REM_USER_CONN_TERM);
+            return;
+        }
+    }
+    xSemaphoreGive(iris_state.mutex);
+}
 
 static void iris_do_send_message(bt_command_message_t *cmd) {
     if (!cmd->arg) return;
