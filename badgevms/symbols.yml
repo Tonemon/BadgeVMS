@@ -31,6 +31,7 @@ include:
 
   # BadgeVMS
   - badgevms/application.h
+  - badgevms/bluetooth.h
   - badgevms/compositor.h
   - badgevms/device.h
   - badgevms/event.h
@@ -905,6 +906,24 @@ simple_function:
   - application_set_metadata
   - application_set_name
   - application_set_version
+  - bt_connect
+  - bt_device_free
+  - bt_device_get_addr
+  - bt_device_get_name
+  - bt_device_get_type
+  - bt_disconnect
+  - bt_forget_device
+  - bt_get_connection_status
+  - bt_get_num_paired
+  - bt_get_own_name
+  - bt_get_paired
+  - bt_get_status
+  - bt_scan_get_num_results
+  - bt_scan_get_result
+  - bt_scan_start
+  - bt_send_message
+  - bt_set_enabled
+  - bt_set_own_name
   - device_get
   - get_mac_address
   - get_num_tasks

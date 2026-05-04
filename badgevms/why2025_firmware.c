@@ -37,6 +37,7 @@
 #include "drivers/tca8418.h"
 #include "drivers/tty.h"
 #include "drivers/wifi.h"
+#include "drivers/bluetooth.h"
 #include "esp_debug_helpers.h"
 #include "esp_event.h"
 #include "esp_log.h"
@@ -133,6 +134,11 @@ int app_main(void) {
 
     if (!device_register("WIFI0", wifi_create())) {
         ESP_LOGE(TAG, "Failed to initialize WIFI0 driver");
+        invalidate_ota_partition();
+    }
+
+    if (!device_register("BT0", bluetooth_create())) {
+        ESP_LOGE(TAG, "Failed to initialize BT0 driver");
         invalidate_ota_partition();
     }
 
