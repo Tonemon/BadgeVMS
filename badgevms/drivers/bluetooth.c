@@ -114,7 +114,8 @@ static void iris_do_connect(bt_command_message_t *cmd);
 static void iris_do_disconnect(bt_command_message_t *cmd);
 static void iris_do_send_message(bt_command_message_t *cmd);
 static void hid_handle_notify_rx(uint16_t conn_handle, struct os_mbuf *om);
-static int iris_gap_event(struct ble_gap_event *event, void *arg);
+static int  iris_gap_event(struct ble_gap_event *event, void *arg);
+static void badge_profile_start_advertising(void);
 
 static void iris(void *ignored) {
     ESP_LOGW("IRIS", "Starting");
@@ -182,9 +183,10 @@ static int iris_gap_event(struct ble_gap_event *event, void *arg) {
         if (ble_hs_adv_parse_fields(&fields, event->disc.data,
                                     event->disc.length_data) != 0)
             break;
+        struct bt_device *d = NULL;
         xSemaphoreTake(iris_state.mutex, portMAX_DELAY);
         if (iris_state.num_scan_results < BT_MAX_SCAN_RESULTS) {
-            struct bt_device *d = &iris_state.scan_results[iris_state.num_scan_results];
+            d = &iris_state.scan_results[iris_state.num_scan_results];
             memset(d, 0, sizeof(*d));
             d->addr        = event->disc.addr;
             addr_to_str(&event->disc.addr, d->addr_str);
@@ -197,12 +199,14 @@ static int iris_gap_event(struct ble_gap_event *event, void *arg) {
                 memcpy(d->name, fields.name, n);
             }
             iris_state.num_scan_results++;
+        }
+        xSemaphoreGive(iris_state.mutex);
+        if (d) {
             if (bt_hid_profile.on_device_found)
                 bt_hid_profile.on_device_found(d);
             if (bt_badge_profile.on_device_found)
                 bt_badge_profile.on_device_found(d);
         }
-        xSemaphoreGive(iris_state.mutex);
         break;
     }
 
@@ -272,14 +276,20 @@ static void iris_do_scan(void) {
     iris_state.num_scan_results = 0;
     xSemaphoreGive(iris_state.mutex);
 
-    ble_gap_disc_cancel();
+    int rc = ble_gap_disc_cancel();
+    if (rc != 0 && rc != BLE_HS_EALREADY)
+        ESP_LOGW(TAG, "disc_cancel: %d", rc);
 
     struct ble_gap_disc_params disc_params = {0};
     disc_params.passive    = 0;
     disc_params.filter_dup = 1;
 
     xEventGroupClearBits(iris_state.event_group, BT_SCAN_DONE_BIT);
-    ble_gap_disc(BLE_OWN_ADDR_PUBLIC, 3000, &disc_params, iris_gap_event, NULL);
+    rc = ble_gap_disc(BLE_OWN_ADDR_PUBLIC, 3000, &disc_params, iris_gap_event, NULL);
+    if (rc != 0) {
+        ESP_LOGW(TAG, "ble_gap_disc failed: %d", rc);
+        return;
+    }
     xEventGroupWaitBits(iris_state.event_group, BT_SCAN_DONE_BIT,
                         pdTRUE, pdFALSE, pdMS_TO_TICKS(4000));
     ESP_LOGI(TAG, "Scan complete: %d devices", iris_state.num_scan_results);
@@ -293,6 +303,10 @@ static void iris_do_connect(bt_command_message_t *cmd) {
     bool found = false;
     for (int i = 0; i < iris_state.num_paired; i++) {
         if (strcmp(iris_state.paired[i].addr_str, target->addr_str) == 0) {
+            if (iris_state.paired[i].conn_status == BT_CONNECTED) {
+                xSemaphoreGive(iris_state.mutex);
+                return;
+            }
             iris_state.paired[i].conn_status = BT_CONNECTING;
             found = true;
             break;
