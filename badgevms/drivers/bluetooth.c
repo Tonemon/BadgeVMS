@@ -113,6 +113,7 @@ static void iris_do_scan(void);
 static void iris_do_connect(bt_command_message_t *cmd);
 static void iris_do_disconnect(bt_command_message_t *cmd);
 static void iris_do_send_message(bt_command_message_t *cmd);
+static void hid_handle_notify_rx(uint16_t conn_handle, struct os_mbuf *om);
 
 static void iris(void *ignored) {
     ESP_LOGW("IRIS", "Starting");
@@ -401,7 +402,7 @@ bt_profile_t bt_hid_profile;
 bt_profile_t bt_badge_profile;
 
 #define HID_SVC_UUID    0x1812
-#define HID_REPORT_UUID 0x2A4D
+#define HID_REPORT_UUID 0x2A22  /* Boot Keyboard Input Report — one per HID service, no disambiguation needed */
 
 typedef struct {
     uint16_t conn_handle;
@@ -504,7 +505,7 @@ static void hid_inject_report(hid_conn_t *hc, const uint8_t *report, size_t len)
     hc->prev_mod = cur_mod;
 }
 
-void hid_handle_notify_rx(uint16_t conn_handle, struct os_mbuf *om) {
+static void hid_handle_notify_rx(uint16_t conn_handle, struct os_mbuf *om) {
     hid_conn_t *hc = hid_conn_for_handle(conn_handle);
     if (!hc) return;
     uint8_t buf[8];
