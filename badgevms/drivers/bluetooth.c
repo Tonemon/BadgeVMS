@@ -30,6 +30,9 @@
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
 #include "task.h"
+#include "badgevms/compositor.h"
+#include "badgevms/event.h"
+#include "badgevms/keyboard.h"
 
 #include <string.h>
 
@@ -397,6 +400,175 @@ static void nimble_host_task(void *param) {
 bt_profile_t bt_hid_profile;
 bt_profile_t bt_badge_profile;
 
+#define HID_SVC_UUID    0x1812
+#define HID_REPORT_UUID 0x2A4D
+
+typedef struct {
+    uint16_t conn_handle;
+    uint16_t svc_start;
+    uint16_t svc_end;
+    uint16_t report_chr_handle;
+    uint16_t report_cccd_handle;
+    uint8_t  prev_keys[6];
+    uint8_t  prev_mod;
+} hid_conn_t;
+
+#define HID_MAX_CONN 4
+static hid_conn_t hid_conns[HID_MAX_CONN];
+
+static hid_conn_t *hid_conn_for_handle(uint16_t conn_handle) {
+    for (int i = 0; i < HID_MAX_CONN; i++) {
+        if (hid_conns[i].conn_handle == conn_handle)
+            return &hid_conns[i];
+    }
+    return NULL;
+}
+
+static hid_conn_t *hid_conn_alloc(uint16_t conn_handle) {
+    for (int i = 0; i < HID_MAX_CONN; i++) {
+        if (hid_conns[i].conn_handle == BLE_HS_CONN_HANDLE_NONE) {
+            memset(&hid_conns[i], 0, sizeof(hid_conn_t));
+            hid_conns[i].conn_handle = conn_handle;
+            return &hid_conns[i];
+        }
+    }
+    return NULL;
+}
+
+static key_mod_t hid_mod_to_keymod(uint8_t hid_mod) {
+    key_mod_t mod = BADGEVMS_KMOD_NONE;
+    if (hid_mod & (1 << 0)) mod |= BADGEVMS_KMOD_LCTRL;
+    if (hid_mod & (1 << 1)) mod |= BADGEVMS_KMOD_LSHIFT;
+    if (hid_mod & (1 << 2)) mod |= BADGEVMS_KMOD_LALT;
+    if (hid_mod & (1 << 3)) mod |= BADGEVMS_KMOD_LGUI;
+    if (hid_mod & (1 << 4)) mod |= BADGEVMS_KMOD_RCTRL;
+    if (hid_mod & (1 << 5)) mod |= BADGEVMS_KMOD_RSHIFT;
+    if (hid_mod & (1 << 6)) mod |= BADGEVMS_KMOD_RALT;
+    if (hid_mod & (1 << 7)) mod |= BADGEVMS_KMOD_RGUI;
+    return mod;
+}
+
+static void hid_inject_report(hid_conn_t *hc, const uint8_t *report, size_t len) {
+    if (len < 3) return;
+
+    uint8_t  cur_mod  = report[0];
+    const uint8_t *cur_keys = &report[2];
+    int      nkeys    = (int)len - 2;
+    if (nkeys > 6) nkeys = 6;
+
+    key_mod_t mod = hid_mod_to_keymod(cur_mod);
+
+    for (int p = 0; p < 6; p++) {
+        uint8_t k = hc->prev_keys[p];
+        if (!k) continue;
+        bool still_held = false;
+        for (int c = 0; c < nkeys; c++) {
+            if (cur_keys[c] == k) { still_held = true; break; }
+        }
+        if (!still_held) {
+            event_t e = {
+                .type = EVENT_KEY_UP,
+                .keyboard = {
+                    .scancode = (keyboard_scancode_t)k,
+                    .mod      = mod,
+                    .down     = false,
+                },
+            };
+            compositor_inject_keyboard_event(e);
+        }
+    }
+
+    for (int c = 0; c < nkeys; c++) {
+        uint8_t k = cur_keys[c];
+        if (!k) continue;
+        bool was_held = false;
+        for (int p = 0; p < 6; p++) {
+            if (hc->prev_keys[p] == k) { was_held = true; break; }
+        }
+        if (!was_held) {
+            event_t e = {
+                .type = EVENT_KEY_DOWN,
+                .keyboard = {
+                    .scancode = (keyboard_scancode_t)k,
+                    .mod      = mod,
+                    .down     = true,
+                },
+            };
+            compositor_inject_keyboard_event(e);
+        }
+    }
+
+    memset(hc->prev_keys, 0, sizeof(hc->prev_keys));
+    for (int c = 0; c < nkeys && c < 6; c++)
+        hc->prev_keys[c] = cur_keys[c];
+    hc->prev_mod = cur_mod;
+}
+
+void hid_handle_notify_rx(uint16_t conn_handle, struct os_mbuf *om) {
+    hid_conn_t *hc = hid_conn_for_handle(conn_handle);
+    if (!hc) return;
+    uint8_t buf[8];
+    uint16_t out_len = 0;
+    if (ble_hs_mbuf_to_flat(om, buf, sizeof(buf), &out_len) != 0) return;
+    hid_inject_report(hc, buf, out_len);
+}
+
+static int hid_desc_disc_cb(uint16_t conn_handle, const struct ble_gatt_error *error,
+                             uint16_t chr_val_handle, const struct ble_gatt_dsc *dsc,
+                             void *arg)
+{
+    hid_conn_t *hc = arg;
+    if (error->status == BLE_HS_EDONE) return 0;
+    if (error->status != 0) return 0;
+    if (ble_uuid_u16(&dsc->uuid.u) == 0x2902) {
+        hc->report_cccd_handle = dsc->handle;
+        uint8_t cccd_val[2] = {0x01, 0x00};
+        ble_gattc_write_flat(conn_handle, hc->report_cccd_handle,
+                             cccd_val, sizeof(cccd_val), NULL, NULL);
+    }
+    return 0;
+}
+
+static int hid_chr_disc_cb(uint16_t conn_handle, const struct ble_gatt_error *error,
+                            const struct ble_gatt_chr *chr, void *arg)
+{
+    hid_conn_t *hc = arg;
+    if (error->status == BLE_HS_EDONE) return 0;
+    if (error->status != 0) return 0;
+    if (ble_uuid_u16(&chr->uuid.u) == HID_REPORT_UUID) {
+        hc->report_chr_handle = chr->val_handle;
+        ble_gattc_disc_all_dscs(conn_handle, chr->val_handle, hc->svc_end,
+                                hid_desc_disc_cb, hc);
+    }
+    return 0;
+}
+
+static int hid_svc_disc_cb(uint16_t conn_handle, const struct ble_gatt_error *error,
+                            const struct ble_gatt_svc *svc, void *arg)
+{
+    hid_conn_t *hc = arg;
+    if (error->status == BLE_HS_EDONE) return 0;
+    if (error->status != 0) return 0;
+    if (ble_uuid_u16(&svc->uuid.u) == HID_SVC_UUID) {
+        hc->svc_start = svc->start_handle;
+        hc->svc_end   = svc->end_handle;
+        ble_gattc_disc_all_chrs(conn_handle, svc->start_handle, svc->end_handle,
+                                hid_chr_disc_cb, hc);
+    }
+    return 0;
+}
+
+static void hid_on_connected(struct bt_device *dev) {
+    hid_conn_t *hc = hid_conn_alloc(dev->conn_handle);
+    if (!hc) return;
+    ble_gattc_disc_all_svcs(dev->conn_handle, hid_svc_disc_cb, hc);
+}
+
+static void hid_on_disconnected(struct bt_device *dev) {
+    hid_conn_t *hc = hid_conn_for_handle(dev->conn_handle);
+    if (hc) hc->conn_handle = BLE_HS_CONN_HANDLE_NONE;
+}
+
 device_t *bluetooth_create(void) {
     ESP_LOGI(TAG, "Initializing");
 
@@ -434,6 +606,12 @@ device_t *bluetooth_create(void) {
 
     iris_queue = xQueueCreate(8, sizeof(bt_command_message_t *));
     create_kernel_task(iris, "Iris", 4096, NULL, 5, &iris_handle, 0);
+
+    for (int i = 0; i < HID_MAX_CONN; i++)
+        hid_conns[i].conn_handle = BLE_HS_CONN_HANDLE_NONE;
+    bt_hid_profile.on_connected    = hid_on_connected;
+    bt_hid_profile.on_disconnected = hid_on_disconnected;
+    bt_hid_profile.on_data         = NULL;
 
     nimble_port_init();
     ble_hs_cfg.sync_cb = on_ble_sync;
