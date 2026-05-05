@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include "thirdparty/cJSON.h"
 
 #include <badgevms/wifi.h>
 #include <SDL3/SDL.h>
@@ -24,8 +25,23 @@
 #define CDE_PROGRESS_FG   0x0078D4
 #define CDE_SUCCESS_COLOR 0x00AA00
 #define CDE_ERROR_COLOR   0xA00000
+#define CDE_INACTIVE_TEXT 0x808080
 
-typedef enum { UI_STATE_CHECKING, UI_STATE_NO_UPDATES, UI_STATE_LIST, UI_STATE_PROGRESS, UI_STATE_COMPLETE } UI_State;
+typedef enum {
+    UI_STATE_SETTINGS_MENU,
+    UI_STATE_HOST_SETTINGS,
+    UI_STATE_VERSION_LIST,
+    UI_STATE_CHECKING,
+    UI_STATE_NO_UPDATES,
+    UI_STATE_LIST,
+    UI_STATE_PROGRESS,
+    UI_STATE_COMPLETE,
+} UI_State;
+
+typedef struct {
+    char name[128];
+    char version[64];
+} version_entry_t;
 
 typedef struct {
     SDL_Window    *window;
@@ -45,6 +61,17 @@ typedef struct {
     int            current_update_index;
     char           checking_status[128];
     bool           force_reinstall;
+    int              settings_selected;
+    char             settings_status[64];
+    version_entry_t *version_entries;
+    int              num_version_entries;
+    int              version_scroll;
+    char             host_ssid[64];
+    bool             host_self_signed_cert;
+    int              host_settings_selected;
+    bool             host_text_edit_active;
+    char             host_text_edit_buf[64];
+    int              host_text_edit_cursor;
 } UI_Context;
 
 static inline Uint16 rgb888_to_rgb565(Uint32 rgb888) {
@@ -355,7 +382,335 @@ void draw_update_window(UI_Context *ctx) {
     );
 }
 
+static void load_host_config(UI_Context *ctx) {
+    strncpy(ctx->host_ssid, "WHY2025-open", sizeof(ctx->host_ssid) - 1);
+    ctx->host_ssid[sizeof(ctx->host_ssid) - 1] = '\0';
+    ctx->host_self_signed_cert = false;
+
+    FILE *f = fopen("APPS:[badgevms_launcher]config.json", "r");
+    if (!f) return;
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char *buf = malloc(sz + 1);
+    if (!buf) { fclose(f); return; }
+    size_t n = fread(buf, 1, sz, f);
+    buf[n] = '\0';
+    fclose(f);
+
+    cJSON *cfg = cJSON_Parse(buf);
+    free(buf);
+    if (!cfg) return;
+
+    cJSON *ssid = cJSON_GetObjectItem(cfg, "ota_host_ssid");
+    if (cJSON_IsString(ssid) && ssid->valuestring)
+        strncpy(ctx->host_ssid, ssid->valuestring, sizeof(ctx->host_ssid) - 1);
+
+    cJSON *cert = cJSON_GetObjectItem(cfg, "ota_host_self_signed_cert");
+    if (cJSON_IsBool(cert))
+        ctx->host_self_signed_cert = cJSON_IsTrue(cert);
+
+    cJSON_Delete(cfg);
+}
+
+static void save_host_config(UI_Context *ctx) {
+    FILE *rf = fopen("APPS:[badgevms_launcher]config.json", "r");
+    cJSON *cfg = NULL;
+    if (rf) {
+        fseek(rf, 0, SEEK_END);
+        long sz = ftell(rf);
+        fseek(rf, 0, SEEK_SET);
+        char *buf = malloc(sz + 1);
+        if (buf) {
+            size_t n = fread(buf, 1, sz, rf);
+            buf[n] = '\0';
+            cfg = cJSON_Parse(buf);
+            free(buf);
+        }
+        fclose(rf);
+    }
+    if (!cfg) cfg = cJSON_CreateObject();
+    if (!cfg) return;
+
+    cJSON_DeleteItemFromObject(cfg, "ota_host_ssid");
+    cJSON_DeleteItemFromObject(cfg, "ota_host_self_signed_cert");
+    cJSON_AddStringToObject(cfg, "ota_host_ssid",             ctx->host_ssid);
+    cJSON_AddBoolToObject(cfg,   "ota_host_self_signed_cert", ctx->host_self_signed_cert);
+
+    char *json_str = cJSON_Print(cfg);
+    cJSON_Delete(cfg);
+    if (!json_str) return;
+    FILE *wf = fopen("APPS:[badgevms_launcher]config.json", "w");
+    if (wf) { fputs(json_str, wf); fclose(wf); }
+    free(json_str);
+}
+
+static void load_version_entries(UI_Context *ctx) {
+    free(ctx->version_entries);
+    ctx->version_entries     = NULL;
+    ctx->num_version_entries = 0;
+    ctx->version_scroll      = 0;
+
+    application_t          *app;
+    application_list_handle list = application_list(&app);
+    while (app) {
+        version_entry_t *tmp = realloc(
+            ctx->version_entries,
+            sizeof(version_entry_t) * (size_t)(ctx->num_version_entries + 1)
+        );
+        if (!tmp) { application_list_close(list); return; }
+        ctx->version_entries = tmp;
+        version_entry_t *e = &ctx->version_entries[ctx->num_version_entries];
+        strncpy(e->name,    app->name,                          sizeof(e->name)    - 1);
+        strncpy(e->version, app->version ? app->version : "?", sizeof(e->version) - 1);
+        e->name[sizeof(e->name) - 1]       = '\0';
+        e->version[sizeof(e->version) - 1] = '\0';
+        ctx->num_version_entries++;
+        app = application_list_get_next(list);
+    }
+    application_list_close(list);
+}
+
+static void draw_version_list(UI_Context *ctx) {
+    int window_x = 30;
+    int window_y = 30;
+    int window_w = SCREEN_WIDTH - 60;
+    int window_h = SCREEN_HEIGHT - 60;
+
+    draw_rect(ctx, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, CDE_BG_COLOR);
+    draw_rect(ctx, window_x, window_y, window_w, window_h, CDE_PANEL_COLOR);
+    draw_3d_border(ctx, window_x, window_y, window_w, window_h, 0);
+
+    int title_h = 45;
+    draw_rect(ctx, window_x + 3, window_y + 3, window_w - 6, title_h, CDE_TITLE_BG);
+    draw_text_bold(ctx, window_x + 15, window_y + 11, "Installed Versions", CDE_SELECTED_TEXT);
+
+    int list_x   = window_x + 20;
+    int list_y   = window_y + title_h + 15;
+    int list_h   = window_h - title_h - 65;
+    int item_h   = 36;
+    int per_page = list_h / item_h;
+
+    for (int i = 0; i < per_page; i++) {
+        int idx = ctx->version_scroll + i;
+        if (idx >= ctx->num_version_entries) break;
+
+        int row_y = list_y + i * item_h;
+        draw_text(ctx, list_x, row_y + 4, ctx->version_entries[idx].name, CDE_TEXT_COLOR);
+
+        char ver_label[80];
+        snprintf(ver_label, sizeof(ver_label), "v%s", ctx->version_entries[idx].version);
+        int label_w = get_text_width(ver_label);
+        draw_text(ctx, window_x + window_w - 20 - label_w, row_y + 4, ver_label, CDE_INACTIVE_TEXT);
+
+        draw_rect(ctx, list_x, row_y + item_h - 2, window_w - 40, 1, CDE_BORDER_DARK);
+    }
+
+    draw_text_centered(
+        ctx, window_x, window_y + window_h - 45, window_w,
+        "UP/DOWN: Scroll   ESC: Back",
+        CDE_TEXT_COLOR
+    );
+}
+
+#define HOST_SETTINGS_NUM_ENTRIES 2
+
+static void draw_host_settings(UI_Context *ctx) {
+    int window_x = 30;
+    int window_y = 30;
+    int window_w = SCREEN_WIDTH - 60;
+    int window_h = SCREEN_HEIGHT - 60;
+
+    draw_rect(ctx, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, CDE_BG_COLOR);
+    draw_rect(ctx, window_x, window_y, window_w, window_h, CDE_PANEL_COLOR);
+    draw_3d_border(ctx, window_x, window_y, window_w, window_h, 0);
+
+    int title_h = 45;
+    draw_rect(ctx, window_x + 3, window_y + 3, window_w - 6, title_h, CDE_TITLE_BG);
+    draw_text_bold(ctx, window_x + 15, window_y + 11, "OTA Host Settings", CDE_SELECTED_TEXT);
+
+    int list_x = window_x + 20;
+    int item_h = 70;
+
+    /* Entry 0: WiFi network name */
+    {
+        int  row_y   = window_y + title_h + 20;
+        bool selected = (ctx->host_settings_selected == 0);
+        if (selected)
+            draw_rect(ctx, list_x, row_y, window_w - 40, item_h - 4, CDE_SELECTED_BG);
+        Uint32 label_color = selected ? CDE_SELECTED_TEXT : CDE_TEXT_COLOR;
+        draw_text(ctx, list_x + 10, row_y + 8, "WiFi network name", label_color);
+
+        char display[66];
+        if (ctx->host_text_edit_active && selected) {
+            snprintf(display, sizeof(display), "%s|", ctx->host_text_edit_buf);
+        } else {
+            strncpy(display, ctx->host_ssid, sizeof(display) - 1);
+            display[sizeof(display) - 1] = '\0';
+        }
+        Uint32 val_color = selected ? CDE_SELECTED_TEXT : CDE_INACTIVE_TEXT;
+        draw_text(ctx, list_x + 10, row_y + 36, display, val_color);
+    }
+
+    /* Entry 1: Generate self-signed certificate */
+    {
+        int  row_y   = window_y + title_h + 20 + item_h;
+        bool selected = (ctx->host_settings_selected == 1);
+        if (selected)
+            draw_rect(ctx, list_x, row_y, window_w - 40, item_h - 4, CDE_SELECTED_BG);
+        Uint32 label_color = selected ? CDE_SELECTED_TEXT : CDE_TEXT_COLOR;
+        draw_text(ctx, list_x + 10, row_y + 8, "Generate self-signed certificate", label_color);
+        const char *val_str   = ctx->host_self_signed_cert ? "ON" : "OFF";
+        Uint32      val_color = selected ? CDE_SELECTED_TEXT : CDE_INACTIVE_TEXT;
+        draw_text(ctx, list_x + 10, row_y + 36, val_str, val_color);
+    }
+
+    const char *footer = ctx->host_text_edit_active
+        ? "Type to edit   ENTER: Confirm   ESC: Cancel   BACKSPACE: Delete"
+        : "UP/DOWN: Navigate   ENTER: Edit/Toggle   ESC: Back";
+    draw_text_centered(ctx, window_x, window_y + window_h - 45, window_w, footer, CDE_TEXT_COLOR);
+}
+
+#define SETTINGS_NUM_ENTRIES 5
+
+static const char *settings_labels[SETTINGS_NUM_ENTRIES] = {
+    "Perform system update check",
+    "Host OTA update",
+    "OTA Host settings",
+    "View installed versions",
+    "Force reinstall defaults",
+};
+
+static void draw_settings_menu(UI_Context *ctx) {
+    int window_x = 30;
+    int window_y = 30;
+    int window_w = SCREEN_WIDTH - 60;
+    int window_h = SCREEN_HEIGHT - 60;
+
+    draw_rect(ctx, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, CDE_BG_COLOR);
+    draw_rect(ctx, window_x, window_y, window_w, window_h, CDE_PANEL_COLOR);
+    draw_3d_border(ctx, window_x, window_y, window_w, window_h, 0);
+
+    int title_h = 45;
+    draw_rect(ctx, window_x + 3, window_y + 3, window_w - 6, title_h, CDE_TITLE_BG);
+    draw_text_bold(ctx, window_x + 15, window_y + 11, "WHY 2025 OTA Updater", CDE_SELECTED_TEXT);
+
+    int list_x = window_x + 20;
+    int list_y = window_y + title_h + 20;
+    int list_w = window_w - 40;
+    int item_h = 50;
+
+    for (int i = 0; i < SETTINGS_NUM_ENTRIES; i++) {
+        int  row_y   = list_y + i * item_h;
+        bool selected = (i == ctx->settings_selected);
+        bool inactive = (i == 1); /* "Host OTA update" is not yet available */
+
+        if (selected)
+            draw_rect(ctx, list_x, row_y, list_w, item_h - 4, CDE_SELECTED_BG);
+
+        Uint32 text_color = inactive   ? CDE_INACTIVE_TEXT
+                          : selected   ? CDE_SELECTED_TEXT
+                          :              CDE_TEXT_COLOR;
+        draw_text(ctx, list_x + 10, row_y + 16, settings_labels[i], text_color);
+    }
+
+    if (ctx->settings_status[0]) {
+        draw_text_centered(
+            ctx, window_x, window_y + window_h - 80, window_w,
+            ctx->settings_status, CDE_INACTIVE_TEXT
+        );
+    }
+
+    draw_text_centered(
+        ctx, window_x, window_y + window_h - 45, window_w,
+        "UP/DOWN: Navigate   ENTER/SPACE: Select   ESC: Exit",
+        CDE_TEXT_COLOR
+    );
+}
+
 void handle_keyboard(UI_Context *ctx, SDL_Scancode key_code) {
+    if (ctx->state == UI_STATE_SETTINGS_MENU) {
+        if (key_code == SDL_SCANCODE_UP) {
+            if (ctx->settings_selected > 0)
+                ctx->settings_selected--;
+        } else if (key_code == SDL_SCANCODE_DOWN) {
+            if (ctx->settings_selected < SETTINGS_NUM_ENTRIES - 1)
+                ctx->settings_selected++;
+        } else if (key_code == SDL_SCANCODE_RETURN || key_code == SDL_SCANCODE_SPACE) {
+            ctx->settings_status[0] = '\0';
+            switch (ctx->settings_selected) {
+                case 0:
+                    ctx->state        = UI_STATE_CHECKING;
+                    ctx->force_reinstall = false;
+                    break;
+                case 1:
+                    strncpy(ctx->settings_status, "Not yet available", sizeof(ctx->settings_status) - 1);
+                    break;
+                case 2:
+                    ctx->state = UI_STATE_HOST_SETTINGS;
+                    break;
+                case 3:
+                    load_version_entries(ctx);
+                    ctx->state = UI_STATE_VERSION_LIST;
+                    break;
+                case 4:
+                    ctx->state        = UI_STATE_CHECKING;
+                    ctx->force_reinstall = true;
+                    break;
+            }
+        }
+        return;
+    }
+
+    if (ctx->state == UI_STATE_VERSION_LIST) {
+        int per_page = (SCREEN_HEIGHT - 60 - 45 - 15 - 65) / 36;
+        if (key_code == SDL_SCANCODE_DOWN) {
+            if (ctx->version_scroll + per_page < ctx->num_version_entries)
+                ctx->version_scroll++;
+        } else if (key_code == SDL_SCANCODE_UP) {
+            if (ctx->version_scroll > 0)
+                ctx->version_scroll--;
+        }
+        return;
+    }
+
+    if (ctx->state == UI_STATE_HOST_SETTINGS) {
+        if (ctx->host_text_edit_active) {
+            if (key_code == SDL_SCANCODE_RETURN) {
+                strncpy(ctx->host_ssid, ctx->host_text_edit_buf, sizeof(ctx->host_ssid) - 1);
+                ctx->host_ssid[sizeof(ctx->host_ssid) - 1] = '\0';
+                save_host_config(ctx);
+                ctx->host_text_edit_active = false;
+                SDL_StopTextInput(ctx->window);
+            } else if (key_code == SDL_SCANCODE_BACKSPACE) {
+                if (ctx->host_text_edit_cursor > 0) {
+                    ctx->host_text_edit_cursor--;
+                    ctx->host_text_edit_buf[ctx->host_text_edit_cursor] = '\0';
+                }
+            }
+        } else {
+            if (key_code == SDL_SCANCODE_UP) {
+                if (ctx->host_settings_selected > 0)
+                    ctx->host_settings_selected--;
+            } else if (key_code == SDL_SCANCODE_DOWN) {
+                if (ctx->host_settings_selected < HOST_SETTINGS_NUM_ENTRIES - 1)
+                    ctx->host_settings_selected++;
+            } else if (key_code == SDL_SCANCODE_RETURN || key_code == SDL_SCANCODE_SPACE) {
+                if (ctx->host_settings_selected == 0) {
+                    strncpy(ctx->host_text_edit_buf, ctx->host_ssid, sizeof(ctx->host_text_edit_buf) - 1);
+                    ctx->host_text_edit_buf[sizeof(ctx->host_text_edit_buf) - 1] = '\0';
+                    ctx->host_text_edit_cursor = (int)strlen(ctx->host_text_edit_buf);
+                    ctx->host_text_edit_active = true;
+                    SDL_StartTextInput(ctx->window);
+                } else if (ctx->host_settings_selected == 1) {
+                    ctx->host_self_signed_cert = !ctx->host_self_signed_cert;
+                    save_host_config(ctx);
+                }
+            }
+        }
+        return;
+    }
+
     if (ctx->state == UI_STATE_COMPLETE || ctx->state == UI_STATE_NO_UPDATES || ctx->connection_failed) {
         if (key_code == SDL_SCANCODE_ESCAPE) {
             SDL_Event quit_event;
@@ -402,6 +757,9 @@ void handle_keyboard(UI_Context *ctx, SDL_Scancode key_code) {
                 quit_event.type = SDL_EVENT_QUIT;
                 SDL_PushEvent(&quit_event);
             } break;
+
+            default:
+                break;
         }
     }
 }
@@ -566,7 +924,7 @@ bool run_update_window_with_check(void) {
     ctx.total_items          = 0;
     ctx.selected_item        = 0;
     ctx.scroll_offset        = 0;
-    ctx.state                = UI_STATE_CHECKING; // Start in checking state
+    ctx.state                = UI_STATE_SETTINGS_MENU;
     ctx.updates_completed    = 0;
     ctx.current_update_index = 0;
 
@@ -612,6 +970,8 @@ bool run_update_window_with_check(void) {
         return false;
     }
 
+    load_host_config(&ctx);
+
     int          quit = 0;
     SDL_Event    e;
     Uint32       frame_start, frame_time;
@@ -630,19 +990,44 @@ bool run_update_window_with_check(void) {
                 quit = 1;
             } else if (e.type == SDL_EVENT_KEY_DOWN) {
                 if (e.key.scancode == SDL_SCANCODE_ESCAPE) {
-                    if (ctx.state == UI_STATE_COMPLETE || ctx.state == UI_STATE_LIST ||
-                        ctx.state == UI_STATE_NO_UPDATES || ctx.connection_failed) {
+                    if (ctx.state == UI_STATE_SETTINGS_MENU) {
+                        quit = 1;
+                    } else if (ctx.state == UI_STATE_HOST_SETTINGS) {
+                        if (ctx.host_text_edit_active) {
+                            ctx.host_text_edit_active = false;
+                            SDL_StopTextInput(ctx.window);
+                        } else {
+                            ctx.state = UI_STATE_SETTINGS_MENU;
+                        }
+                    } else if (ctx.state == UI_STATE_VERSION_LIST) {
+                        ctx.state = UI_STATE_SETTINGS_MENU;
+                    } else if (ctx.state == UI_STATE_COMPLETE || ctx.state == UI_STATE_LIST ||
+                               ctx.state == UI_STATE_NO_UPDATES || ctx.connection_failed) {
                         quit = 1;
                     }
                 } else {
                     handle_keyboard(&ctx, e.key.scancode);
+                }
+            } else if (e.type == SDL_EVENT_TEXT_INPUT) {
+                if (ctx.state == UI_STATE_HOST_SETTINGS && ctx.host_text_edit_active) {
+                    int remaining = (int)sizeof(ctx.host_text_edit_buf) - 1 - ctx.host_text_edit_cursor;
+                    if (remaining > 0) {
+                        strncat(ctx.host_text_edit_buf, e.text.text, (size_t)remaining);
+                        ctx.host_text_edit_cursor = (int)strlen(ctx.host_text_edit_buf);
+                    }
                 }
             }
         }
 
         memset(ctx.pixels, 0, SCREEN_WIDTH * SCREEN_HEIGHT * sizeof(Uint16));
 
-        if (ctx.state == UI_STATE_CHECKING) {
+        if (ctx.state == UI_STATE_SETTINGS_MENU) {
+            draw_settings_menu(&ctx);
+        } else if (ctx.state == UI_STATE_HOST_SETTINGS) {
+            draw_host_settings(&ctx);
+        } else if (ctx.state == UI_STATE_VERSION_LIST) {
+            draw_version_list(&ctx);
+        } else if (ctx.state == UI_STATE_CHECKING) {
             draw_checking_window(&ctx);
 
             if (!check_started && ctx.connected) {
@@ -690,7 +1075,7 @@ bool run_update_window_with_check(void) {
             SDL_Delay(frame_delay - frame_time);
         }
 
-        if (!ctx.connected && !ctx.connection_failed) {
+        if (ctx.state == UI_STATE_CHECKING && !ctx.connected && !ctx.connection_failed) {
             wifi_connection_status_t result = wifi_connect();
             if (result != WIFI_CONNECTED) {
                 ctx.connected         = false;
@@ -703,6 +1088,10 @@ bool run_update_window_with_check(void) {
 
     if (ctx.updates) {
         free(ctx.updates);
+    }
+
+    if (ctx.version_entries) {
+        free(ctx.version_entries);
     }
 
     free(ctx.pixels);
