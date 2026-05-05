@@ -1582,8 +1582,10 @@ static void draw_bluetooth_settings(app_context *ctx) {
             draw_rect(ctx, ix, iy, iw, item_h - 2, CDE_SELECTED_BG);
 
         uint32_t tc = (i == ctx->selected_item) ? CDE_SELECTED_TEXT : CDE_TEXT_COLOR;
-        draw_text_bold(ctx, ix + 10, iy + 10,
-                       ctx->bt_devices[i].name[0] ? ctx->bt_devices[i].name : "<unnamed>", tc);
+        const char *label = ctx->bt_devices[i].name[0]
+                            ? ctx->bt_devices[i].name
+                            : ctx->bt_devices[i].addr[0] ? ctx->bt_devices[i].addr : "<unnamed>";
+        draw_text_bold(ctx, ix + 10, iy + 10, label, tc);
 
         if (ctx->bt_devices[i].status == BT_CONNECTED)
             draw_text(ctx, ix + 10, iy + 35, "[Connected]", CDE_SUCCESS_COLOR);

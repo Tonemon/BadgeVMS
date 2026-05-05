@@ -198,6 +198,8 @@ static int iris_gap_event(struct ble_gap_event *event, void *arg) {
                            ? fields.name_len : sizeof(d->name) - 1;
                 memcpy(d->name, fields.name, n);
             }
+            ESP_LOGI(TAG, "  found [%s] name='%s' type=%d",
+                     d->addr_str, d->name[0] ? d->name : "(none)", d->type);
             iris_state.num_scan_results++;
         }
         xSemaphoreGive(iris_state.mutex);
@@ -216,10 +218,12 @@ static int iris_gap_event(struct ble_gap_event *event, void *arg) {
 
     case BLE_GAP_EVENT_CONNECT: {
         if (event->connect.status != 0) {
+            ESP_LOGW(TAG, "GAP CONNECT failed: status=%d", event->connect.status);
             xEventGroupSetBits(iris_state.event_group, BT_DISCONNECTED_BIT);
             break;
         }
         uint16_t conn_handle = event->connect.conn_handle;
+        ESP_LOGI(TAG, "GAP CONNECT: handle=%d", conn_handle);
         xSemaphoreTake(iris_state.mutex, portMAX_DELAY);
         for (int i = 0; i < iris_state.num_paired; i++) {
             if (iris_state.paired[i].conn_status == BT_CONNECTING) {
@@ -246,6 +250,8 @@ static int iris_gap_event(struct ble_gap_event *event, void *arg) {
 
     case BLE_GAP_EVENT_DISCONNECT: {
         uint16_t conn_handle = event->disconnect.conn.conn_handle;
+        ESP_LOGI(TAG, "GAP DISCONNECT: handle=%d reason=%d",
+                 conn_handle, event->disconnect.reason);
         xSemaphoreTake(iris_state.mutex, portMAX_DELAY);
         for (int i = 0; i < iris_state.num_paired; i++) {
             if (iris_state.paired[i].conn_handle == conn_handle) {
@@ -290,9 +296,10 @@ static void iris_do_scan(void) {
         ESP_LOGW(TAG, "ble_gap_disc failed: %d", rc);
         return;
     }
+    ESP_LOGI(TAG, "BLE scan started (active, 3 s)");
     xEventGroupWaitBits(iris_state.event_group, BT_SCAN_DONE_BIT,
                         pdTRUE, pdFALSE, pdMS_TO_TICKS(4000));
-    ESP_LOGI(TAG, "Scan complete: %d devices", iris_state.num_scan_results);
+    ESP_LOGI(TAG, "BLE scan complete: %d devices found", iris_state.num_scan_results);
 }
 
 static void iris_do_connect(bt_command_message_t *cmd) {
@@ -322,11 +329,18 @@ static void iris_do_connect(bt_command_message_t *cmd) {
         xSemaphoreGive(iris_state.mutex);
     }
 
+    ESP_LOGI(TAG, "BLE connect -> [%s] name='%s'", target->addr_str,
+             target->name[0] ? target->name : "(none)");
     ble_gap_adv_stop();
     xEventGroupClearBits(iris_state.event_group, BT_CONNECTED_BIT | BT_DISCONNECTED_BIT);
     ble_gap_connect(BLE_OWN_ADDR_PUBLIC, &target->addr, 10000, NULL, iris_gap_event, NULL);
-    xEventGroupWaitBits(iris_state.event_group, BT_CONNECTED_BIT | BT_DISCONNECTED_BIT,
-                        pdTRUE, pdFALSE, pdMS_TO_TICKS(11000));
+    EventBits_t bits = xEventGroupWaitBits(iris_state.event_group,
+                                           BT_CONNECTED_BIT | BT_DISCONNECTED_BIT,
+                                           pdTRUE, pdFALSE, pdMS_TO_TICKS(11000));
+    if (bits & BT_CONNECTED_BIT)
+        ESP_LOGI(TAG, "BLE connected: [%s]", target->addr_str);
+    else
+        ESP_LOGW(TAG, "BLE connect failed/timeout: [%s]", target->addr_str);
     if (iris_state.status == BT_ENABLED)
         badge_profile_start_advertising();
 }
