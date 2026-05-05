@@ -282,7 +282,7 @@ static void iris_do_scan(void) {
 
     struct ble_gap_disc_params disc_params = {0};
     disc_params.passive    = 0;
-    disc_params.filter_dup = 1;
+    disc_params.filter_duplicates = 1;
 
     xEventGroupClearBits(iris_state.event_group, BT_SCAN_DONE_BIT);
     rc = ble_gap_disc(BLE_OWN_ADDR_PUBLIC, 3000, &disc_params, iris_gap_event, NULL);
@@ -801,6 +801,8 @@ device_t *bluetooth_create(void) {
     bt_hid_profile.on_connected    = hid_on_connected;
     bt_hid_profile.on_disconnected = hid_on_disconnected;
     bt_hid_profile.on_data         = NULL;
+
+    extern void ble_store_config_init(void);
 
     nimble_port_init();
     ble_hs_cfg.sync_cb = on_ble_sync;
