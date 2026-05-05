@@ -7,5 +7,7 @@
   "autorotate": false,
   "mac_randomization": true,
   "boot_animation": 2,
-  "wifi_enabled": true
+  "wifi_enabled": true,
+  "bt_enabled": true,
+  "bt_name": ""
 }
