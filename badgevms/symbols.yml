@@ -915,6 +915,8 @@ simple_function:
   - bt_forget_device
   - bt_get_connection_status
   - bt_get_num_paired
+  - bt_get_connected_name
+  - bt_get_own_addr_str
   - bt_get_own_name
   - bt_get_paired
   - bt_get_status

@@ -2,7 +2,7 @@
     "unique_identifier": "badgevms_settings",
     "name": "Settings",
     "author": "Team:Badge & ThatOneGuy",
-    "version": "3",
+    "version": "3.4",
     "interpreter": "",
     "metadata_file": "",
     "binary_path": "badgevms_settings.elf",

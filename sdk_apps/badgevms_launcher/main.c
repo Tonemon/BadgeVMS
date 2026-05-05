@@ -8,6 +8,7 @@
 #include <badgevms/event.h>
 #include <badgevms/keyboard.h>
 #include <badgevms/wifi.h>
+#include <badgevms/bluetooth.h>
 #include <string.h>
 
 #include <badgevms/process.h>
@@ -782,9 +783,11 @@ static const char * const TERM_DMESG[] = {
     "[    0.012881] wifi: MAC de:ad:be:ef:ca:fe",
     "[    0.013507] wifi: mode station",
     /* line 11 = hostname, built dynamically at runtime */
+    /* line 12 = bluetooth name, built dynamically at runtime */
+    /* line 13 = bluetooth addr, built dynamically at runtime */
 };
 #define TERM_DMESG_STATIC  11
-#define TERM_DMESG_TOTAL   12
+#define TERM_DMESG_TOTAL   14
 
 static const char * const TERM_ART[] = {
     "  ___           _           _   ___  __  _______",
@@ -798,7 +801,9 @@ static const char * const TERM_ART[] = {
 static void draw_terminal_boot_screen(
     Launcher_Context *ctx,
     uint32_t          elapsed_ms,
-    const char       *hostname
+    const char       *hostname,
+    const char       *bt_name,
+    const char       *bt_addr
 ) {
     memset(ctx->pixels, 0, SCREEN_WIDTH * SCREEN_HEIGHT * sizeof(uint16_t));
 
@@ -806,6 +811,16 @@ static void draw_terminal_boot_screen(
     snprintf(host_line, sizeof(host_line),
              "[    0.014230] network: hostname %s",
              (hostname && hostname[0]) ? hostname : "why2025badge");
+
+    char bt_name_line[72];
+    snprintf(bt_name_line, sizeof(bt_name_line),
+             "[    0.015100] bluetooth: name %s",
+             (bt_name && bt_name[0]) ? bt_name : "WHY2025");
+
+    char bt_addr_line[72];
+    snprintf(bt_addr_line, sizeof(bt_addr_line),
+             "[    0.015780] bluetooth: addr %s",
+             (bt_addr && bt_addr[0]) ? bt_addr : "??:??:??:??:??:??");
 
     const int x0 = 8;
     const int lh = 26;   /* font 24 px + 2 px gap */
@@ -815,7 +830,11 @@ static void draw_terminal_boot_screen(
     if (nvis > TERM_DMESG_TOTAL) nvis = TERM_DMESG_TOTAL;
 
     for (int i = 0; i < nvis; i++) {
-        const char *line = (i < TERM_DMESG_STATIC) ? TERM_DMESG[i] : host_line;
+        const char *line;
+        if (i < TERM_DMESG_STATIC)       line = TERM_DMESG[i];
+        else if (i == TERM_DMESG_STATIC)  line = host_line;
+        else if (i == TERM_DMESG_STATIC + 1) line = bt_name_line;
+        else                              line = bt_addr_line;
         draw_text(ctx, x0, y, line, 0x808080);
         y += lh;
     }
@@ -1066,6 +1085,7 @@ int main(int argc, char *argv[]) {
     /* 5. Read badge identity and boot animation choice from config (non-fatal) */
     char boot_owner_name[64]  = {0};
     char boot_hostname[128]   = "why2025badge";
+    char boot_bt_name[32]     = {0};
     bool boot_display_name    = false;
     int  boot_animation       = 0;   /* 0 = splash, 1 = terminal, 2 = both */
     {
@@ -1087,6 +1107,8 @@ int main(int argc, char *argv[]) {
                         cJSON *hn  = cJSON_GetObjectItem(cfg, "hostname");
                         cJSON *ba  = cJSON_GetObjectItem(cfg, "boot_animation");
                         cJSON *we  = cJSON_GetObjectItem(cfg, "wifi_enabled");
+                        cJSON *btn = cJSON_GetObjectItem(cfg, "bt_name");
+                        cJSON *bte = cJSON_GetObjectItem(cfg, "bt_enabled");
                         if (cJSON_IsBool(dub) && cJSON_IsTrue(dub))
                             boot_display_name = true;
                         if (cJSON_IsString(bon) && bon->valuestring)
@@ -1099,6 +1121,11 @@ int main(int argc, char *argv[]) {
                             boot_animation = (int)cJSON_GetNumberValue(ba);
                         if (cJSON_IsBool(we) && !cJSON_IsTrue(we))
                             wifi_set_enabled(false);
+                        if (cJSON_IsString(btn) && btn->valuestring)
+                            strncpy(boot_bt_name, btn->valuestring,
+                                    sizeof(boot_bt_name) - 1);
+                        if (cJSON_IsBool(bte) && !cJSON_IsTrue(bte))
+                            bt_set_enabled(false);
                         cJSON_Delete(cfg);
                     }
                 }
@@ -1106,6 +1133,13 @@ int main(int argc, char *argv[]) {
             fclose(cfg_f);
         }
     }
+
+    /* Apply BT name override and get address for terminal display */
+    if (boot_bt_name[0])
+        bt_set_own_name(boot_bt_name);
+    const char *effective_bt_name = boot_bt_name[0] ? boot_bt_name : bt_get_own_name();
+    char boot_bt_addr[18] = {0};
+    bt_get_own_addr_str(boot_bt_addr, sizeof(boot_bt_addr));
 
     /* 6. Boot animation loop — runs until scan done AND minimum elapsed:
      *    splash/terminal: 2000 ms; both: 3000 ms (2000 ms terminal + 1000 ms splash) */
@@ -1129,7 +1163,8 @@ int main(int argc, char *argv[]) {
 
         if (boot_animation == 1 ||
             (boot_animation == 2 && elapsed_ms < BOTH_SWITCH_MS)) {
-            draw_terminal_boot_screen(&boot_ctx, elapsed_ms, boot_hostname);
+            draw_terminal_boot_screen(&boot_ctx, elapsed_ms, boot_hostname,
+                                      effective_bt_name, boot_bt_addr);
         } else {
             draw_boot_screen(&boot_ctx, logo_data, logo_w, logo_h, logo_ch, bright, dot_count,
                              boot_display_name ? boot_owner_name : NULL);

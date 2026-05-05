@@ -49,6 +49,8 @@ bt_status_t bt_get_status(void);
 
 void        bt_set_own_name(const char *name);
 const char *bt_get_own_name(void);
+void        bt_get_own_addr_str(char *out, size_t n);
+void        bt_get_connected_name(char *out, size_t n);
 
 void             bt_scan_start(void);
 int              bt_scan_get_num_results(void);

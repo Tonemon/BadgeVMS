@@ -419,6 +419,33 @@ const char *bt_get_own_name(void) {
     return iris_state.own_name;
 }
 
+void bt_get_own_addr_str(char *out, size_t n) {
+    uint8_t mac[6];
+    esp_read_mac(mac, ESP_MAC_BT);
+    snprintf(out, n, "%02X:%02X:%02X:%02X:%02X:%02X",
+             mac[5], mac[4], mac[3], mac[2], mac[1], mac[0]);
+}
+
+void bt_get_connected_name(char *out, size_t n) {
+    if (!out || n == 0) return;
+    out[0] = '\0';
+    xSemaphoreTake(iris_state.mutex, portMAX_DELAY);
+    int count = 0;
+    char first_name[64] = {0};
+    for (int i = 0; i < iris_state.num_paired; i++) {
+        if (iris_state.paired[i].conn_status == BT_CONNECTED) {
+            if (count == 0)
+                strncpy(first_name, iris_state.paired[i].name, sizeof(first_name) - 1);
+            count++;
+        }
+    }
+    xSemaphoreGive(iris_state.mutex);
+    if (count == 1)
+        snprintf(out, n, "%s", first_name);
+    else if (count > 1)
+        snprintf(out, n, "Multiple");
+}
+
 const char *bt_device_get_name(bt_device_handle dev) { return dev->name; }
 const char *bt_device_get_addr(bt_device_handle dev) { return dev->addr_str; }
 bt_device_type_t bt_device_get_type(bt_device_handle dev) { return dev->type; }
