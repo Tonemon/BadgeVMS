@@ -352,22 +352,48 @@ static const uint16_t ICON_GEAR[ICON_ART] = {
     0x909, 0x909, 0x909, 0x909,  /* E/W teeth + centre hole (cols 0,3,8,11)    */
     0xBFD, 0x6F6, 0x0F0, 0x0F0,  /* body outer, diagonal teeth, S tooth        */
 };
+/* Bluetooth ᛒ rune: vertical backbone (cols 4-5) + two right-pointing chevrons */
+static const uint16_t ICON_BT[ICON_ART] = {
+    0x0C0, 0x0E0, 0x0D0, 0x0C8,  /* backbone top, upper-right chevron out      */
+    0x0D0, 0x0F0, 0x0E0, 0x0D0,  /* return, centre join, lower chevron out     */
+    0x0C8, 0x0D0, 0x0E0, 0x0C0,  /* lower tip, return, join, backbone bottom   */
+};
+/* Same ᛒ (compact, rows 0-9) + three device-dots below (row 11) */
+static const uint16_t ICON_BT_DEVICES[ICON_ART] = {
+    0x0C0, 0x0E0, 0x0D0, 0x0C8,  /* backbone top, upper chevron out            */
+    0x0D0, 0x0F0, 0x0E0, 0x0D0,  /* return, join, lower chevron out            */
+    0x0C8, 0x0D0, 0x0E0, 0x666,  /* lower tip, return, join; 3 device dots     */
+};
 
 static const uint16_t * const SETTINGS_ICONS[] = {
-    ICON_WIFI, ICON_WIFI, ICON_PERSON, ICON_MONITOR, ICON_TERMINAL,
-    ICON_EYE,  ICON_ROTATE, ICON_LIST, ICON_HOUSE, ICON_INFO,
+    ICON_WIFI,       /* 0  WiFi toggle          */
+    ICON_WIFI,       /* 1  WiFi Network         */
+    ICON_BT,         /* 2  Bluetooth toggle     */
+    ICON_BT_DEVICES, /* 3  Bluetooth Devices    */
+    ICON_PERSON,     /* 4  Badge owner name     */
+    ICON_MONITOR,    /* 5  Hostname             */
+    ICON_TERMINAL,   /* 6  Boot animation       */
+    ICON_EYE,        /* 7  Display username     */
+    ICON_ROTATE,     /* 8  Autorotate           */
+    ICON_LIST,       /* 9  MAC randomization    */
+    ICON_HOUSE,      /* 10 Reorder Apps         */
+    ICON_INFO,       /* 11 Default app          */
+    ICON_GEAR,       /* 12 About                */
 };
 static const uint32_t SETTINGS_ICON_COLORS[] = {
-    0x0070C0,  /* WiFi toggle    – blue         */
-    0x0070C0,  /* WiFi Network   – blue         */
-    0x804090,  /* Person         – purple       */
-    0x206080,  /* Monitor        – steel blue   */
-    0x208020,  /* Terminal       – terminal grn */
-    0x008890,  /* Eye            – teal         */
-    0xC04800,  /* Rotate         – orange       */
-    0x405868,  /* List           – slate        */
-    0x287030,  /* House          – green        */
-    0x003898,  /* Info           – royal blue   */
+    0x0070C0,  /* WiFi toggle       – blue        */
+    0x0070C0,  /* WiFi Network      – blue        */
+    0x0088CC,  /* Bluetooth         – sky blue    */
+    0x0055AA,  /* Bluetooth Devices – cobalt      */
+    0x804090,  /* Person            – purple      */
+    0x206080,  /* Monitor           – steel blue  */
+    0x208020,  /* Terminal          – green       */
+    0x008890,  /* Eye               – teal        */
+    0xC04800,  /* Rotate            – orange      */
+    0x405868,  /* List              – slate       */
+    0x287030,  /* House             – green       */
+    0x003898,  /* Info              – royal blue  */
+    0x506070,  /* Gear              – cool grey   */
 };
 
 static void draw_pixel_icon(app_context *ctx, int bx, int by,
@@ -1184,16 +1210,16 @@ static void draw_main_settings(app_context *ctx) {
 
     char const *categories[]   = {
         "WiFi",
-        "WiFi Network",
+        "WiFi network",
         "Bluetooth",
-        "Bluetooth Devices",
+        "Bluetooth devices",
         "Badge owner name",
         "Hostname",
         "Boot animation",
         "Display username at boot",
         "Autorotate",
         "MAC randomization",
-        "Reorder Apps",
+        "Reorder apps",
         "Default app",
         "About"
     };
@@ -1207,7 +1233,7 @@ static void draw_main_settings(app_context *ctx) {
         "Animation shown while the badge is booting",
         "Show your name during the boot sequence",
         "Flip display when badge is held upside down",
-        "Use a random MAC address (takes effect on reboot)",
+        "Use a random MAC address (on reboot)",
         "Organise launcher home screen and folders",
         "The application launched at boot",
         "Badge specifications"
@@ -1414,6 +1440,15 @@ static void draw_wifi_settings(app_context *ctx) {
             break;
         }
     }
+    /* network_count is 0 while scanning — check live connection as well */
+    if (!is_connected) {
+        wifi_station_handle sta = wifi_get_connection_station();
+        if (sta) {
+            is_connected = true;
+            snprintf(ctx->connection_status_text, sizeof(ctx->connection_status_text), "Connected");
+            wifi_scan_free_station(sta);
+        }
+    }
 
     draw_text(ctx, window_x + 15, window_y + title_h + 15, "Status:", CDE_TEXT_COLOR);
     draw_text_bold(
@@ -1553,11 +1588,14 @@ static void draw_bluetooth_settings(app_context *ctx) {
     draw_text_bold(ctx, window_x + 15, window_y + 11, "Bluetooth Settings", CDE_SELECTED_TEXT);
 
     draw_text(ctx, window_x + 15, window_y + title_h + 15, "Device name:", CDE_TEXT_COLOR);
-    draw_text_bold(ctx, window_x + 150, window_y + title_h + 15,
-                   ctx->bt_own_name[0] ? ctx->bt_own_name : "(not set)", CDE_INACTIVE_TEXT);
+    {
+        const char *dn = ctx->bt_own_name[0] ? ctx->bt_own_name : "(not set)";
+        int dn_x = window_x + window_w - get_text_width(dn) - 20;
+        draw_text_bold(ctx, dn_x, window_y + title_h + 15, dn, CDE_INACTIVE_TEXT);
+    }
 
     draw_text(ctx, window_x + 15, window_y + title_h + 45,
-              ctx->bt_scan_filter == BT_DEVICE_KEYBOARD ? "Keyboards:" : "Nearby Badges:",
+              ctx->bt_scan_filter == BT_DEVICE_KEYBOARD ? "Keyboards:" : "Nearby Devices:",
               CDE_TEXT_COLOR);
 
     int list_y = window_y + title_h + 75;
@@ -1606,8 +1644,12 @@ static void draw_bluetooth_settings(app_context *ctx) {
 
     draw_rect(ctx, window_x + 3, window_y + window_h - 42, window_w - 6, 39, CDE_BUTTON_COLOR);
     draw_3d_border(ctx, window_x + 3, window_y + window_h - 42, window_w - 6, 39, 1);
-    draw_text(ctx, window_x + 15, window_y + window_h - 35,
-              "ENTER=connect  S=scan  ESC=back", CDE_INACTIVE_TEXT);
+    if (ctx->bt_scanning) {
+        draw_text(ctx, window_x + 15, window_y + window_h - 35, "Scanning...", CDE_INACTIVE_TEXT);
+    } else {
+        draw_text(ctx, window_x + 15, window_y + window_h - 35,
+                  "UP/DOWN: Navigate  ENTER: Connect  S: Scan  ESC: Back", CDE_TEXT_COLOR);
+    }
 
     if (ctx->bt_show_send_msg_dialog) {
         int dx = (SCREEN_WIDTH - 400) / 2, dy = (SCREEN_HEIGHT - 200) / 2;
