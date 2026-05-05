@@ -12,8 +12,11 @@
 bool debug  = false;
 bool window = true;
 
-size_t perform_update_check(update_item_t **updates) {
+size_t perform_update_check(update_item_t **updates, check_status_cb_t cb, void *userdata, bool force_reinstall) {
     size_t num_updates = 0;
+
+    if (cb) cb("Reaching update server...", userdata);
+    if (cb) cb("Fetching default app list...", userdata);
 
     char **default_apps     = NULL;
     size_t num_default_apps = list_default_applications(&default_apps);
@@ -29,7 +32,6 @@ size_t perform_update_check(update_item_t **updates) {
             }
 
             printf(" %s not yet installed\n", default_apps[i]);
-            // Create a dummy app for the updater
             application_t *new_app =
                 application_create(default_apps[i], default_apps[i], NULL, "-1", NULL, APPLICATION_SOURCE_BADGEHUB);
             if (!new_app) {
@@ -50,13 +52,18 @@ size_t perform_update_check(update_item_t **updates) {
         debug_printf("  Version: %s\n", app->version);
         debug_printf("  Source: %s\n", source_to_name(app->source));
         if (app->source == APPLICATION_SOURCE_BADGEHUB) {
-            char *version = NULL;
-            if (check_for_updates(app, &version)) {
+            char cb_msg[128];
+            snprintf(cb_msg, sizeof(cb_msg), "Checking for updates: %s", app->unique_identifier);
+            if (cb) cb(cb_msg, userdata);
+
+            char *version    = NULL;
+            bool  has_update = check_for_updates(app, &version);
+            if (has_update || force_reinstall) {
                 ++num_updates;
                 *updates                                = realloc(*updates, sizeof(update_item_t) * num_updates);
                 (*updates)[num_updates - 1].app         = app;
                 (*updates)[num_updates - 1].name        = strdup(app->name);
-                (*updates)[num_updates - 1].version     = strdup(version);
+                (*updates)[num_updates - 1].version     = strdup(version ? version : app->version);
                 (*updates)[num_updates - 1].description = NULL;
                 (*updates)[num_updates - 1].is_firmware = false;
                 debug_printf(
@@ -72,6 +79,8 @@ size_t perform_update_check(update_item_t **updates) {
         }
         app = application_list_get_next(app_list);
     }
+
+    if (cb) cb("Checking firmware update...", userdata);
 
     char *firmware_version = NULL;
     if (check_for_firmware_updates(&firmware_version)) {
@@ -120,7 +129,7 @@ int main(int argc, char *argv[]) {
         badgehub_ping();
 
         update_item_t *updates     = NULL;
-        size_t         num_updates = perform_update_check(&updates);
+        size_t         num_updates = perform_update_check(&updates, NULL, NULL, false);
 
         if (num_updates) {
             printf("Updates available!\n");

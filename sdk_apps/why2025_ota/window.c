@@ -43,6 +43,8 @@ typedef struct {
     UI_State       state;
     int            updates_completed;
     int            current_update_index;
+    char           checking_status[128];
+    bool           force_reinstall;
 } UI_Context;
 
 static inline Uint16 rgb888_to_rgb565(Uint32 rgb888) {
@@ -424,7 +426,23 @@ void update_progress(UI_Context *ctx) {
     }
 }
 
-void draw_checking_window(UI_Context *ctx) {
+static void draw_checking_window(UI_Context *ctx);
+
+static void check_status_render_cb(const char *status, void *userdata) {
+    UI_Context *ctx = (UI_Context *)userdata;
+    strncpy(ctx->checking_status, status, sizeof(ctx->checking_status) - 1);
+    ctx->checking_status[sizeof(ctx->checking_status) - 1] = '\0';
+
+    memset(ctx->pixels, 0, SCREEN_WIDTH * SCREEN_HEIGHT * sizeof(Uint16));
+    draw_checking_window(ctx);
+    SDL_UpdateTexture(ctx->framebuffer, NULL, ctx->pixels, SCREEN_WIDTH * sizeof(Uint16));
+    SDL_SetRenderDrawColor(ctx->renderer, 0, 0, 0, 255);
+    SDL_RenderClear(ctx->renderer);
+    SDL_RenderTexture(ctx->renderer, ctx->framebuffer, NULL, NULL);
+    SDL_RenderPresent(ctx->renderer);
+}
+
+static void draw_checking_window(UI_Context *ctx) {
     int window_x = 30;
     int window_y = 30;
     int window_w = SCREEN_WIDTH - 60;
@@ -464,14 +482,10 @@ void draw_checking_window(UI_Context *ctx) {
         draw_text_centered(ctx, window_x, content_y + 40, window_w, progress_text, CDE_TEXT_COLOR);
 
         if (ctx->connected) {
-            draw_text_centered(
-                ctx,
-                window_x,
-                window_y + window_h - 45,
-                window_w,
-                "Connecting to update server...",
-                CDE_TEXT_COLOR
-            );
+            const char *status_str = ctx->checking_status[0]
+                ? ctx->checking_status
+                : "Connecting to update server...";
+            draw_text_centered(ctx, window_x, window_y + window_h - 45, window_w, status_str, CDE_TEXT_COLOR);
         } else {
             draw_text_centered(
                 ctx,
@@ -637,7 +651,8 @@ bool run_update_window_with_check(void) {
             }
 
             if (check_started && !check_complete && (SDL_GetTicks() - check_start_time > 100)) {
-                size_t num_updates = perform_update_check(&ctx.updates);
+                size_t num_updates = perform_update_check(
+                    &ctx.updates, check_status_render_cb, &ctx, ctx.force_reinstall);
                 ctx.total_items    = num_updates;
                 check_complete     = true;
             }
