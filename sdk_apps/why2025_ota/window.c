@@ -11,6 +11,7 @@
 
 #define SCREEN_WIDTH  720
 #define SCREEN_HEIGHT 720
+#define VERSION_LIST_PER_PAGE ((SCREEN_HEIGHT - 60 - 45 - 65) / 36)
 
 #define CDE_BG_COLOR      0x9CA0A0
 #define CDE_PANEL_COLOR   0xAEB2B2
@@ -25,7 +26,7 @@
 #define CDE_PROGRESS_FG   0x0078D4
 #define CDE_SUCCESS_COLOR 0x00AA00
 #define CDE_ERROR_COLOR   0xA00000
-#define CDE_INACTIVE_TEXT 0x808080
+#define CDE_INACTIVE_TEXT 0x808080  /* same shade as CDE_TITLE_BG — intentional */
 
 typedef enum {
     UI_STATE_SETTINGS_MENU,
@@ -61,6 +62,9 @@ typedef struct {
     int            current_update_index;
     char           checking_status[128];
     bool           force_reinstall;
+    bool           check_started;
+    bool           check_complete;
+    Uint32         check_start_time;
     int              settings_selected;
     char             settings_status[64];
     version_entry_t *version_entries;
@@ -392,6 +396,7 @@ static void load_host_config(UI_Context *ctx) {
     fseek(f, 0, SEEK_END);
     long sz = ftell(f);
     fseek(f, 0, SEEK_SET);
+    if (sz <= 0) { fclose(f); return; }
     char *buf = malloc(sz + 1);
     if (!buf) { fclose(f); return; }
     size_t n = fread(buf, 1, sz, f);
@@ -420,12 +425,14 @@ static void save_host_config(UI_Context *ctx) {
         fseek(rf, 0, SEEK_END);
         long sz = ftell(rf);
         fseek(rf, 0, SEEK_SET);
-        char *buf = malloc(sz + 1);
-        if (buf) {
-            size_t n = fread(buf, 1, sz, rf);
-            buf[n] = '\0';
-            cfg = cJSON_Parse(buf);
-            free(buf);
+        if (sz > 0) {
+            char *buf = malloc(sz + 1);
+            if (buf) {
+                size_t n = fread(buf, 1, sz, rf);
+                buf[n] = '\0';
+                cfg = cJSON_Parse(buf);
+                free(buf);
+            }
         }
         fclose(rf);
     }
@@ -441,7 +448,13 @@ static void save_host_config(UI_Context *ctx) {
     cJSON_Delete(cfg);
     if (!json_str) return;
     FILE *wf = fopen("APPS:[badgevms_launcher]config.json", "w");
-    if (wf) { fputs(json_str, wf); fclose(wf); }
+    if (wf) {
+        fputs(json_str, wf);
+        fclose(wf);
+    } else {
+        strncpy(ctx->settings_status, "Save failed", sizeof(ctx->settings_status) - 1);
+        ctx->settings_status[sizeof(ctx->settings_status) - 1] = '\0';
+    }
     free(json_str);
 }
 
@@ -461,7 +474,7 @@ static void load_version_entries(UI_Context *ctx) {
         if (!tmp) { application_list_close(list); return; }
         ctx->version_entries = tmp;
         version_entry_t *e = &ctx->version_entries[ctx->num_version_entries];
-        strncpy(e->name,    app->name,                          sizeof(e->name)    - 1);
+        strncpy(e->name,    app->name ? app->name : "(unknown)", sizeof(e->name)    - 1);
         strncpy(e->version, app->version ? app->version : "?", sizeof(e->version) - 1);
         e->name[sizeof(e->name) - 1]       = '\0';
         e->version[sizeof(e->version) - 1] = '\0';
@@ -489,8 +502,12 @@ static void draw_version_list(UI_Context *ctx) {
     int list_y   = window_y + title_h + 15;
     int list_h   = window_h - title_h - 65;
     int item_h   = 36;
-    int per_page = list_h / item_h;
+    int per_page = VERSION_LIST_PER_PAGE;
 
+    if (ctx->num_version_entries == 0) {
+        draw_text_centered(ctx, window_x, list_y + list_h / 2, window_w,
+            "No applications installed", CDE_INACTIVE_TEXT);
+    }
     for (int i = 0; i < per_page; i++) {
         int idx = ctx->version_scroll + i;
         if (idx >= ctx->num_version_entries) break;
@@ -605,7 +622,7 @@ static void draw_settings_menu(UI_Context *ctx) {
         bool selected = (i == ctx->settings_selected);
         bool inactive = (i == 1); /* "Host OTA update" is not yet available */
 
-        if (selected)
+        if (selected && !inactive)
             draw_rect(ctx, list_x, row_y, list_w, item_h - 4, CDE_SELECTED_BG);
 
         Uint32 text_color = inactive   ? CDE_INACTIVE_TEXT
@@ -640,8 +657,14 @@ void handle_keyboard(UI_Context *ctx, SDL_Scancode key_code) {
             ctx->settings_status[0] = '\0';
             switch (ctx->settings_selected) {
                 case 0:
-                    ctx->state        = UI_STATE_CHECKING;
-                    ctx->force_reinstall = false;
+                    ctx->state              = UI_STATE_CHECKING;
+                    ctx->force_reinstall    = false;
+                    ctx->check_started      = false;
+                    ctx->check_complete     = false;
+                    ctx->check_start_time   = 0;
+                    ctx->connected          = false;
+                    ctx->connection_failed  = false;
+                    ctx->checking_status[0] = '\0';
                     break;
                 case 1:
                     strncpy(ctx->settings_status, "Not yet available", sizeof(ctx->settings_status) - 1);
@@ -654,8 +677,14 @@ void handle_keyboard(UI_Context *ctx, SDL_Scancode key_code) {
                     ctx->state = UI_STATE_VERSION_LIST;
                     break;
                 case 4:
-                    ctx->state        = UI_STATE_CHECKING;
-                    ctx->force_reinstall = true;
+                    ctx->state              = UI_STATE_CHECKING;
+                    ctx->force_reinstall    = true;
+                    ctx->check_started      = false;
+                    ctx->check_complete     = false;
+                    ctx->check_start_time   = 0;
+                    ctx->connected          = false;
+                    ctx->connection_failed  = false;
+                    ctx->checking_status[0] = '\0';
                     break;
             }
         }
@@ -663,7 +692,7 @@ void handle_keyboard(UI_Context *ctx, SDL_Scancode key_code) {
     }
 
     if (ctx->state == UI_STATE_VERSION_LIST) {
-        int per_page = (SCREEN_HEIGHT - 60 - 45 - 15 - 65) / 36;
+        int per_page = VERSION_LIST_PER_PAGE;
         if (key_code == SDL_SCANCODE_DOWN) {
             if (ctx->version_scroll + per_page < ctx->num_version_entries)
                 ctx->version_scroll++;
@@ -977,9 +1006,6 @@ bool run_update_window_with_check(void) {
     Uint32       frame_start, frame_time;
     Uint32 const frame_delay = 1000 / 60; // 60 FPS cap
 
-    bool         check_started          = false;
-    bool         check_complete         = false;
-    Uint32       check_start_time       = 0;
     Uint32 const min_check_display_time = 1500; // Show checking screen for at least 1.5 seconds
 
     while (!quit) {
@@ -1030,19 +1056,19 @@ bool run_update_window_with_check(void) {
         } else if (ctx.state == UI_STATE_CHECKING) {
             draw_checking_window(&ctx);
 
-            if (!check_started && ctx.connected) {
-                check_started    = true;
-                check_start_time = SDL_GetTicks();
+            if (!ctx.check_started && ctx.connected) {
+                ctx.check_started    = true;
+                ctx.check_start_time = SDL_GetTicks();
             }
 
-            if (check_started && !check_complete && (SDL_GetTicks() - check_start_time > 100)) {
+            if (ctx.check_started && !ctx.check_complete && (SDL_GetTicks() - ctx.check_start_time > 100)) {
                 size_t num_updates = perform_update_check(
                     &ctx.updates, check_status_render_cb, &ctx, ctx.force_reinstall);
-                ctx.total_items    = num_updates;
-                check_complete     = true;
+                ctx.total_items      = num_updates;
+                ctx.check_complete   = true;
             }
 
-            if (check_complete && (SDL_GetTicks() - check_start_time > min_check_display_time)) {
+            if (ctx.check_complete && (SDL_GetTicks() - ctx.check_start_time > min_check_display_time)) {
                 if (ctx.total_items > 0) {
                     ctx.state = UI_STATE_LIST;
                 } else {
