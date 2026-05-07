@@ -4,7 +4,9 @@
 
 #include <arpa/inet.h>
 #include <badgevms/application.h>
+#include <badgevms/ota.h>
 #include <badgevms/wifi.h>
+#include <dirent.h>
 #include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -108,19 +110,19 @@ static void handle_summaries(int fd) {
 }
 
 static void handle_latest_revision(int fd, const char *slug) {
+    if (strcmp(slug, "why2025_firmware") == 0) {
+        send_text(fd, 200, "OK", "1\n");
+        return;
+    }
     application_t *app = application_get(slug);
     if (!app) { send_text(fd, 404, "Not Found", "404"); return; }
     application_free(app);
     send_text(fd, 200, "OK", "1\n");
 }
 
-static void handle_revision_json(int fd, const char *slug, const char *our_ip) {
-    application_t *app = application_get(slug);
-    if (!app) { send_text(fd, 404, "Not Found", "404"); return; }
-
-    const char *name = app->name        ? app->name        : slug;
-    const char *bin  = app->binary_path ? app->binary_path : slug;
-
+static void build_revision_json(int fd, const char *slug, const char *name,
+                                const char *bin, const char *dir_path,
+                                const char *our_ip) {
     cJSON *root    = cJSON_CreateObject();
     cJSON *version = cJSON_CreateObject();
     cJSON *meta    = cJSON_CreateObject();
@@ -129,43 +131,59 @@ static void handle_revision_json(int fd, const char *slug, const char *our_ip) {
     cJSON *files   = cJSON_CreateArray();
 
     if (!root || !version || !meta || !app_arr || !app_obj || !files) {
-        application_free(app);
         cJSON_Delete(root);
         send_text(fd, 500, "Error", "OOM");
         return;
     }
 
     cJSON_AddStringToObject(meta, "name", name);
-    cJSON_AddStringToObject(app_obj, "executable", bin);
+    if (bin) cJSON_AddStringToObject(app_obj, "executable", bin);
     cJSON_AddItemToArray(app_arr, app_obj);
     cJSON_AddItemToObject(meta, "application", app_arr);
     cJSON_AddItemToObject(version, "app_metadata", meta);
     cJSON_AddItemToObject(version, "files", files);
     cJSON_AddItemToObject(root, "version", version);
 
-    char url[300];
+    char url[512];
 
-    /* ELF entry */
-    cJSON *f1 = cJSON_CreateObject();
-    snprintf(url, sizeof(url), "http://%s/api/v3/projects/%s/rev1/files/%s",
-             our_ip, slug, bin);
-    if (f1) {
-        cJSON_AddStringToObject(f1, "url",       url);
-        cJSON_AddStringToObject(f1, "full_path", bin);
-        cJSON_AddItemToArray(files, f1);
+    if (dir_path) {
+        /* Enumerate all files in the app directory */
+        DIR *dir = opendir(dir_path);
+        if (dir) {
+            struct dirent *entry;
+            while ((entry = readdir(dir)) != NULL) {
+                if (entry->d_name[0] == '.') continue;
+                if (strcmp(entry->d_name, "manifest.json") == 0) continue;
+                cJSON *f = cJSON_CreateObject();
+                if (!f) continue;
+                snprintf(url, sizeof(url),
+                         "http://%s/api/v3/projects/%s/rev1/files/%s",
+                         our_ip, slug, entry->d_name);
+                cJSON_AddStringToObject(f, "url",       url);
+                cJSON_AddStringToObject(f, "full_path", entry->d_name);
+                cJSON_AddItemToArray(files, f);
+            }
+            closedir(dir);
+        }
+    } else {
+        /* Firmware binary (served from flash, not a directory) */
+        cJSON *f1 = cJSON_CreateObject();
+        snprintf(url, sizeof(url), "http://%s/api/v3/projects/%s/rev1/files/badgevms.bin",
+                 our_ip, slug);
+        if (f1) {
+            cJSON_AddStringToObject(f1, "url",       url);
+            cJSON_AddStringToObject(f1, "full_path", "badgevms.bin");
+            cJSON_AddItemToArray(files, f1);
+        }
+        cJSON *f2 = cJSON_CreateObject();
+        snprintf(url, sizeof(url), "http://%s/api/v3/projects/%s/rev1/files/version.txt",
+                 our_ip, slug);
+        if (f2) {
+            cJSON_AddStringToObject(f2, "url",       url);
+            cJSON_AddStringToObject(f2, "full_path", "version.txt");
+            cJSON_AddItemToArray(files, f2);
+        }
     }
-
-    /* version.txt entry */
-    cJSON *f2 = cJSON_CreateObject();
-    snprintf(url, sizeof(url), "http://%s/api/v3/projects/%s/rev1/files/version.txt",
-             our_ip, slug);
-    if (f2) {
-        cJSON_AddStringToObject(f2, "url",       url);
-        cJSON_AddStringToObject(f2, "full_path", "version.txt");
-        cJSON_AddItemToArray(files, f2);
-    }
-
-    application_free(app);
 
     char *json = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
@@ -173,7 +191,94 @@ static void handle_revision_json(int fd, const char *slug, const char *our_ip) {
     else       { send_text(fd, 500, "Error", "JSON OOM"); }
 }
 
+static void handle_revision_json(int fd, const char *slug, const char *our_ip) {
+    /* Firmware binary lives in flash, not in an app directory */
+    if (strcmp(slug, "why2025_firmware") == 0) {
+        build_revision_json(fd, slug, "BadgeVMS Firmware", NULL, NULL, our_ip);
+        return;
+    }
+
+    application_t *app = application_get(slug);
+    if (!app) { send_text(fd, 404, "Not Found", "404"); return; }
+
+    const char *name = app->name        ? app->name        : slug;
+    const char *bin  = app->binary_path ? app->binary_path : slug;
+
+    /* Get app directory path by building a file path and stripping the filename.
+     * Free app only after build_revision_json — name and bin point into app. */
+    char *sample = application_create_file_string(app, "version.txt");
+
+    char *dir_path = NULL;
+    if (sample) {
+        char *slash = strrchr(sample, '/');
+        if (slash) *slash = '\0';
+        dir_path = sample;
+    }
+
+    build_revision_json(fd, slug, name, bin, dir_path, our_ip);
+    application_free(app);
+    free(sample);
+}
+
+static void send_file_stream(int fd, FILE *f, long fsize) {
+    char hdr[256];
+    snprintf(hdr, sizeof(hdr),
+             "HTTP/1.0 200 OK\r\n"
+             "Content-Type: application/octet-stream\r\n"
+             "Content-Length: %ld\r\n"
+             "Connection: close\r\n"
+             "\r\n",
+             fsize);
+    write(fd, hdr, strlen(hdr));
+
+    char   buf[4096];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0)
+        write(fd, buf, n);
+}
+
 static void handle_file(int fd, const char *slug, const char *filename) {
+    /* Firmware binary — served directly from the running OTA partition */
+    if (strcmp(slug, "why2025_firmware") == 0) {
+        if (strcmp(filename, "version.txt") == 0) {
+            char *ver = NULL;
+            if (ota_get_running_version(&ver) && ver) {
+                send_text(fd, 200, "OK", ver);
+                free(ver);
+            } else {
+                send_text(fd, 200, "OK", "0");
+            }
+            return;
+        }
+        if (strcmp(filename, "badgevms.bin") == 0) {
+            size_t fwsize = ota_get_firmware_size();
+            if (!fwsize) { send_text(fd, 500, "Error", "Firmware size error"); return; }
+
+            char hdr[256];
+            snprintf(hdr, sizeof(hdr),
+                     "HTTP/1.0 200 OK\r\n"
+                     "Content-Type: application/octet-stream\r\n"
+                     "Content-Length: %zu\r\n"
+                     "Connection: close\r\n"
+                     "\r\n",
+                     fwsize);
+            write(fd, hdr, strlen(hdr));
+
+            char   buf[4096];
+            size_t offset = 0;
+            while (offset < fwsize) {
+                size_t chunk = sizeof(buf);
+                if (offset + chunk > fwsize) chunk = fwsize - offset;
+                if (!ota_read_firmware(offset, buf, chunk)) break;
+                write(fd, buf, chunk);
+                offset += chunk;
+            }
+            return;
+        }
+        send_text(fd, 404, "Not Found", "404");
+        return;
+    }
+
     application_t *app = application_get(slug);
     if (!app) { send_text(fd, 404, "Not Found", "404"); return; }
 
@@ -204,20 +309,7 @@ static void handle_file(int fd, const char *slug, const char *filename) {
         return;
     }
 
-    char hdr[256];
-    snprintf(hdr, sizeof(hdr),
-             "HTTP/1.0 200 OK\r\n"
-             "Content-Type: application/octet-stream\r\n"
-             "Content-Length: %ld\r\n"
-             "Connection: close\r\n"
-             "\r\n",
-             fsize);
-    write(fd, hdr, strlen(hdr));
-
-    char   buf[1024];
-    size_t n;
-    while ((n = fread(buf, 1, sizeof(buf), f)) > 0)
-        write(fd, buf, n);
+    send_file_stream(fd, f, fsize);
     fclose(f);
 }
 

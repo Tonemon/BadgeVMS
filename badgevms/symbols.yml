@@ -934,8 +934,10 @@ simple_function:
   - compositor_set_autorotate
   - get_screen_info
   - mkdir_p
+  - ota_get_firmware_size
   - ota_get_invalid_version
   - ota_get_running_version
+  - ota_read_firmware
   - ota_session_abort
   - ota_session_commit
   - ota_session_open
@@ -1129,6 +1131,7 @@ wrapped_function:
   - getenv
   - getline
   - getpid
+  - getsockname
   - gets
   - gmtime
   - iconv_close
@@ -1163,6 +1166,7 @@ wrapped_function:
   - setbuf
   - setbuffer
   - setlinebuf
+  - setsockopt
   - setvbuf
   - snprintf
   - socket

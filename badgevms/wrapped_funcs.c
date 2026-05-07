@@ -385,7 +385,7 @@ int why_socket(int domain, int type, int protocol) {
     task_info_t *task_info = get_task_info();
     ESP_LOGW("why_socket", "Calling socket from task %p", task_info->handle);
 
-    if (domain != AF_INET || type != SOCK_STREAM || protocol != 0) {
+    if (domain != AF_INET) {
         task_info->_errno = EAFNOSUPPORT;
         return -1;
     }
@@ -534,6 +534,19 @@ ssize_t why_sendto(int sockfd, const void *buf, size_t len, int flags,
     int sock = _why_task_get_socket(sockfd);
     if (sock < 0) { get_task_info()->_errno = EBADF; return -1; }
     return sendto(sock, buf, len, flags, dest_addr, addrlen);
+}
+
+int why_setsockopt(int sockfd, int level, int optname,
+                   const void *optval, socklen_t optlen) {
+    int sock = _why_task_get_socket(sockfd);
+    if (sock < 0) { get_task_info()->_errno = EBADF; return -1; }
+    return setsockopt(sock, level, optname, optval, optlen);
+}
+
+int why_getsockname(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
+    int sock = _why_task_get_socket(sockfd);
+    if (sock < 0) { get_task_info()->_errno = EBADF; return -1; }
+    return getsockname(sock, addr, addrlen);
 }
 
 int why_open(char const *pathname, int flags, mode_t mode) {
