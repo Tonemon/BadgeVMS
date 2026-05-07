@@ -20,6 +20,8 @@ typedef struct {
     char          *version;
     char          *description;
     bool           is_firmware;
+    bool           is_new_install;
+    bool           selected;
 } update_item_t;
 
 typedef struct http_data {

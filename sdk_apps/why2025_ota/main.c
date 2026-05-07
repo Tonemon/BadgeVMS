@@ -61,11 +61,13 @@ size_t perform_update_check(update_item_t **updates, check_status_cb_t cb, void 
             if (has_update || force_reinstall) {
                 ++num_updates;
                 *updates                                = realloc(*updates, sizeof(update_item_t) * num_updates);
-                (*updates)[num_updates - 1].app         = app;
-                (*updates)[num_updates - 1].name        = strdup(app->name);
-                (*updates)[num_updates - 1].version     = strdup(version ? version : app->version);
-                (*updates)[num_updates - 1].description = NULL;
-                (*updates)[num_updates - 1].is_firmware = false;
+                (*updates)[num_updates - 1].app            = app;
+                (*updates)[num_updates - 1].name           = strdup(app->name);
+                (*updates)[num_updates - 1].version        = strdup(version ? version : app->version);
+                (*updates)[num_updates - 1].description    = NULL;
+                (*updates)[num_updates - 1].is_firmware    = false;
+                (*updates)[num_updates - 1].is_new_install = (strcmp(app->version, "-1") == 0);
+                (*updates)[num_updates - 1].selected       = true;
                 debug_printf(
                     "New version available for %s (%s < %s)\n",
                     app->name,
@@ -87,11 +89,13 @@ size_t perform_update_check(update_item_t **updates, check_status_cb_t cb, void 
         debug_printf("New firmware version available!");
         ++num_updates;
         *updates                                = realloc(*updates, sizeof(update_item_t) * num_updates);
-        (*updates)[num_updates - 1].app         = NULL;
-        (*updates)[num_updates - 1].name        = strdup("BadgeVMS Firmware");
-        (*updates)[num_updates - 1].version     = strdup(firmware_version);
-        (*updates)[num_updates - 1].description = strdup("Main badge firmware");
-        (*updates)[num_updates - 1].is_firmware = true;
+        (*updates)[num_updates - 1].app            = NULL;
+        (*updates)[num_updates - 1].name           = strdup("BadgeVMS Firmware");
+        (*updates)[num_updates - 1].version        = strdup(firmware_version);
+        (*updates)[num_updates - 1].description    = strdup("Main badge firmware");
+        (*updates)[num_updates - 1].is_firmware    = true;
+        (*updates)[num_updates - 1].is_new_install = false;
+        (*updates)[num_updates - 1].selected       = true;
     }
 
     // application_list_close(app_list);

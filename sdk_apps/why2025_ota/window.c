@@ -1,10 +1,12 @@
 #include "font.h"
+#include "ota_server.h"
 #include "ota_update.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include "thirdparty/cJSON.h"
 
+#include <badgevms/process.h>
 #include <badgevms/wifi.h>
 #include <SDL3/SDL.h>
 #include <string.h>
@@ -37,6 +39,7 @@ typedef enum {
     UI_STATE_LIST,
     UI_STATE_PROGRESS,
     UI_STATE_COMPLETE,
+    UI_STATE_HOSTING,
 } UI_State;
 
 typedef struct {
@@ -57,6 +60,7 @@ typedef struct {
     int            selected_item;
     int            total_items;
     int            items_per_page;
+    int            items_to_install;
     UI_State       state;
     int            updates_completed;
     int            current_update_index;
@@ -76,6 +80,8 @@ typedef struct {
     bool             host_text_edit_active;
     char             host_text_edit_buf[64];
     int              host_text_edit_cursor;
+    ota_host_state_t host_state;
+    bool             host_thread_launched;
 } UI_Context;
 
 static inline Uint16 rgb888_to_rgb565(Uint32 rgb888) {
@@ -170,6 +176,17 @@ void draw_3d_border(UI_Context *ctx, int x, int y, int w, int h, int inset) {
     draw_rect(ctx, x + w - 3, y, 3, h, dark_color);
 }
 
+void draw_checkbox(UI_Context *ctx, int x, int y, bool checked, Uint32 fg_color) {
+    int s = 16;
+    draw_rect(ctx, x, y, s, 1, fg_color);
+    draw_rect(ctx, x, y + s - 1, s, 1, fg_color);
+    draw_rect(ctx, x, y, 1, s, fg_color);
+    draw_rect(ctx, x + s - 1, y, 1, s, fg_color);
+    if (checked) {
+        draw_rect(ctx, x + 3, y + 3, s - 6, s - 6, fg_color);
+    }
+}
+
 void draw_completion_window(UI_Context *ctx) {
     int window_x = 30;
     int window_y = 30;
@@ -195,10 +212,10 @@ void draw_completion_window(UI_Context *ctx) {
     draw_text_centered(ctx, window_x, content_y, window_w, "All Updates Completed Successfully!", CDE_TEXT_COLOR);
 
     char summary_text[128];
-    if (ctx->total_items == 1) {
+    if (ctx->items_to_install == 1) {
         snprintf(summary_text, sizeof(summary_text), "1 application has been updated");
     } else {
-        snprintf(summary_text, sizeof(summary_text), "%d applications have been updated", ctx->total_items);
+        snprintf(summary_text, sizeof(summary_text), "%d applications have been updated", ctx->items_to_install);
     }
     draw_text_centered(ctx, window_x, content_y + 40, window_w, summary_text, CDE_TEXT_COLOR);
 
@@ -251,7 +268,9 @@ void draw_progress_window(UI_Context *ctx) {
     draw_rect(ctx, bar_x, bar_y, bar_width, bar_height, CDE_PROGRESS_BG);
     draw_3d_border(ctx, bar_x, bar_y, bar_width, bar_height, 1);
 
-    float progress   = (float)ctx->updates_completed / (float)ctx->total_items;
+    float progress = ctx->items_to_install > 0
+                         ? (float)ctx->updates_completed / (float)ctx->items_to_install
+                         : 0.0f;
     int   fill_width = (int)((bar_width - 6) * progress);
 
     if (fill_width > 0) {
@@ -260,7 +279,7 @@ void draw_progress_window(UI_Context *ctx) {
     }
 
     char progress_text[128];
-    int  remaining = ctx->total_items - ctx->updates_completed;
+    int  remaining = ctx->items_to_install - ctx->updates_completed;
     if (remaining == 1) {
         snprintf(progress_text, sizeof(progress_text), "1 application remaining");
     } else {
@@ -303,8 +322,13 @@ void draw_update_window(UI_Context *ctx) {
     draw_rect(ctx, window_x + 3, window_y + 3, window_w - 6, title_h, CDE_TITLE_BG);
     draw_text_bold(ctx, window_x + 15, window_y + 11, "System Updates", CDE_SELECTED_TEXT);
 
+    int selected_count = 0;
+    for (int i = 0; i < ctx->total_items; i++) {
+        if (ctx->updates[i].selected) selected_count++;
+    }
+
     char count_text[64];
-    snprintf(count_text, sizeof(count_text), "Updates Available: %d", ctx->total_items);
+    snprintf(count_text, sizeof(count_text), "Available: %d  Selected: %d", ctx->total_items, selected_count);
     draw_text(ctx, window_x + 15, window_y + title_h + 20, count_text, CDE_TEXT_COLOR);
 
     int list_y      = window_y + title_h + 55;
@@ -321,9 +345,10 @@ void draw_update_window(UI_Context *ctx) {
         visible_end = ctx->total_items;
 
     for (int i = visible_start; i < visible_end; i++) {
-        int item_y = list_y + 3 + (i - visible_start) * item_height;
-        int item_x = window_x + 18;
-        int item_w = window_w - 36;
+        int item_y    = list_y + 3 + (i - visible_start) * item_height;
+        int item_x    = window_x + 18;
+        int item_w    = window_w - 36;
+        int content_x = item_x + 32; /* shifted right to make room for checkbox */
 
         if (i == ctx->selected_item) {
             draw_rect(ctx, item_x, item_y, item_w, item_height - 2, CDE_SELECTED_BG);
@@ -331,26 +356,37 @@ void draw_update_window(UI_Context *ctx) {
 
         Uint32 text_color = (i == ctx->selected_item) ? CDE_SELECTED_TEXT : CDE_TEXT_COLOR;
 
-        draw_text_bold(ctx, item_x + 8, item_y + 6, ctx->updates[i].name, text_color);
+        /* Checkbox — 16x16, vertically centered in the 80px item */
+        draw_checkbox(ctx, item_x + 8, item_y + 32, ctx->updates[i].selected, text_color);
+
+        draw_text_bold(ctx, content_x, item_y + 6, ctx->updates[i].name, text_color);
 
         char version_text[64];
         snprintf(version_text, sizeof(version_text), "Version: %s", ctx->updates[i].version);
-        draw_text(ctx, item_x + 8, item_y + 30, version_text, text_color);
+        draw_text(ctx, content_x, item_y + 30, version_text, text_color);
+
+        /* "New Install" / "Update" label right after the version text */
+        const char *type_label  = ctx->updates[i].is_new_install ? "  New Install" : "  Update";
+        Uint32      label_color = (i == ctx->selected_item)          ? CDE_SELECTED_TEXT
+                                : ctx->updates[i].is_new_install     ? CDE_SUCCESS_COLOR
+                                :                                       CDE_INACTIVE_TEXT;
+        int label_x = content_x + get_text_width(version_text);
+        draw_text(ctx, label_x, item_y + 30, type_label, label_color);
 
         char desc[60]       = {0};
-        int  max_desc_chars = (item_w - 16) / FONT_WIDTH;
+        int  max_desc_chars = (item_w - 40) / FONT_WIDTH;
         if (max_desc_chars > 59)
             max_desc_chars = 59;
         if (ctx->updates[i].description) {
             strncpy(desc, ctx->updates[i].description, max_desc_chars);
             desc[max_desc_chars] = '\0';
-            if (strlen(ctx->updates[i].description) > max_desc_chars) {
+            if (strlen(ctx->updates[i].description) > (size_t)max_desc_chars) {
                 desc[max_desc_chars - 3] = '.';
                 desc[max_desc_chars - 2] = '.';
                 desc[max_desc_chars - 1] = '.';
             }
         }
-        draw_text(ctx, item_x + 8, item_y + 54, desc, text_color);
+        draw_text(ctx, content_x, item_y + 54, desc, text_color);
 
         if (i < visible_end - 1) {
             draw_rect(ctx, item_x, item_y + item_height - 2, item_w, 1, CDE_BORDER_DARK);
@@ -367,7 +403,7 @@ void draw_update_window(UI_Context *ctx) {
 
         int thumb_h = (scrollbar_h * ctx->items_per_page) / ctx->total_items;
         if (thumb_h < 30)
-            thumb_h = 30; // Minimum thumb size
+            thumb_h = 30;
         int thumb_y = scrollbar_y;
         if (ctx->total_items > ctx->items_per_page) {
             thumb_y += ((scrollbar_h - thumb_h) * ctx->scroll_offset) / (ctx->total_items - ctx->items_per_page);
@@ -381,7 +417,7 @@ void draw_update_window(UI_Context *ctx) {
         ctx,
         window_x + 15,
         window_y + window_h - 35,
-        "UP/DOWN to navigate, SPACE to update, ESC to exit",
+        "UP/DOWN: navigate  SPACE: toggle  ENTER: install selected  ESC: exit",
         CDE_TEXT_COLOR
     );
 }
@@ -620,7 +656,7 @@ static void draw_settings_menu(UI_Context *ctx) {
     for (int i = 0; i < SETTINGS_NUM_ENTRIES; i++) {
         int  row_y   = list_y + i * item_h;
         bool selected = (i == ctx->settings_selected);
-        bool inactive = (i == 1); /* "Host OTA update" is not yet available */
+        bool inactive = false;
 
         if (selected && !inactive)
             draw_rect(ctx, list_x, row_y, list_w, item_h - 4, CDE_SELECTED_BG);
@@ -667,7 +703,11 @@ void handle_keyboard(UI_Context *ctx, SDL_Scancode key_code) {
                     ctx->checking_status[0] = '\0';
                     break;
                 case 1:
-                    strncpy(ctx->settings_status, "Not yet available", sizeof(ctx->settings_status) - 1);
+                    /* Initialise host state and switch to hosting screen */
+                    memset(&ctx->host_state, 0, sizeof(ctx->host_state));
+                    ctx->host_state.listen_fd = -1;
+                    ctx->host_thread_launched = false;
+                    ctx->state = UI_STATE_HOSTING;
                     break;
                 case 2:
                     ctx->state = UI_STATE_HOST_SETTINGS;
@@ -774,12 +814,26 @@ void handle_keyboard(UI_Context *ctx, SDL_Scancode key_code) {
                 break;
 
             case SDL_SCANCODE_SPACE:
-            case SDL_SCANCODE_RETURN:
-                printf("Starting updates...\n");
+                ctx->updates[ctx->selected_item].selected = !ctx->updates[ctx->selected_item].selected;
+                break;
+
+            case SDL_SCANCODE_RETURN: {
+                int count = 0;
+                for (int i = 0; i < ctx->total_items; i++) {
+                    if (ctx->updates[i].selected) count++;
+                }
+                if (count == 0) break;
+                printf("Starting updates (%d selected)...\n", count);
+                ctx->items_to_install     = count;
                 ctx->state                = UI_STATE_PROGRESS;
                 ctx->updates_completed    = 0;
                 ctx->current_update_index = 0;
-                break;
+                /* Advance to the first selected item */
+                while (ctx->current_update_index < ctx->total_items &&
+                       !ctx->updates[ctx->current_update_index].selected) {
+                    ctx->current_update_index++;
+                }
+            } break;
 
             case SDL_SCANCODE_ESCAPE: {
                 SDL_Event quit_event;
@@ -794,7 +848,8 @@ void handle_keyboard(UI_Context *ctx, SDL_Scancode key_code) {
 }
 
 void update_progress(UI_Context *ctx) {
-    if (ctx->state == UI_STATE_PROGRESS && ctx->updates_completed < ctx->total_items) {
+    if (ctx->state == UI_STATE_PROGRESS && ctx->updates_completed < ctx->items_to_install) {
+        /* current_update_index is guaranteed to point at a selected item on entry */
         if (!ctx->updates[ctx->current_update_index].is_firmware) {
             update_application(
                 ctx->updates[ctx->current_update_index].app,
@@ -807,7 +862,13 @@ void update_progress(UI_Context *ctx) {
         ctx->updates_completed++;
         ctx->current_update_index++;
 
-        if (ctx->updates_completed >= ctx->total_items) {
+        /* Skip past any unselected items */
+        while (ctx->current_update_index < ctx->total_items &&
+               !ctx->updates[ctx->current_update_index].selected) {
+            ctx->current_update_index++;
+        }
+
+        if (ctx->updates_completed >= ctx->items_to_install) {
             ctx->state = UI_STATE_COMPLETE;
         }
     }
@@ -895,6 +956,60 @@ static void draw_checking_window(UI_Context *ctx) {
             CDE_ERROR_COLOR
         );
     }
+}
+
+static void draw_hosting_window(UI_Context *ctx) {
+    int window_x = 30;
+    int window_y = 30;
+    int window_w = SCREEN_WIDTH - 60;
+    int window_h = SCREEN_HEIGHT - 60;
+
+    draw_rect(ctx, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, CDE_BG_COLOR);
+    draw_rect(ctx, window_x, window_y, window_w, window_h, CDE_PANEL_COLOR);
+    draw_3d_border(ctx, window_x, window_y, window_w, window_h, 0);
+
+    int title_h = 45;
+    draw_rect(ctx, window_x + 3, window_y + 3, window_w - 6, title_h, CDE_TITLE_BG);
+    draw_text_bold(ctx, window_x + 15, window_y + 11, "OTA Host Server", CDE_SELECTED_TEXT);
+
+    int y = window_y + title_h + 30;
+
+    bool running      = atomic_load(&ctx->host_state.running);
+    bool stop_req     = atomic_load(&ctx->host_state.stop_requested);
+    int  req_count    = atomic_load(&ctx->host_state.requests_served);
+
+    if (stop_req && !running) {
+        draw_text_centered(ctx, window_x, y, window_w, "Server stopped.", CDE_INACTIVE_TEXT);
+    } else if (!running) {
+        draw_text_centered(ctx, window_x, y, window_w, "Starting server...", CDE_TEXT_COLOR);
+    } else {
+        /* Server is up — show connection info */
+        char line[128];
+
+        snprintf(line, sizeof(line), "Server running at http://%s", ctx->host_state.ip);
+        draw_text_centered(ctx, window_x, y, window_w, line, CDE_SUCCESS_COLOR);
+        y += 36;
+
+        draw_text_centered(ctx, window_x, y, window_w,
+            "Configure your DNS or router to point", CDE_TEXT_COLOR);
+        y += 28;
+        draw_text_centered(ctx, window_x, y, window_w,
+            "badge.why2025.org at the address above.", CDE_TEXT_COLOR);
+        y += 36;
+
+        snprintf(line, sizeof(line), "Connect old badge to the same WiFi network.");
+        draw_text_centered(ctx, window_x, y, window_w, line, CDE_TEXT_COLOR);
+        y += 36;
+
+        draw_rect(ctx, window_x + 30, y, window_w - 60, 1, CDE_BORDER_DARK);
+        y += 16;
+
+        snprintf(line, sizeof(line), "Requests served: %d", req_count);
+        draw_text_centered(ctx, window_x, y, window_w, line, CDE_TEXT_COLOR);
+    }
+
+    draw_text_centered(ctx, window_x, window_y + window_h - 45, window_w,
+        "ESC: stop server and return", CDE_TEXT_COLOR);
 }
 
 void draw_no_updates_window(UI_Context *ctx) {
@@ -1027,6 +1142,10 @@ bool run_update_window_with_check(void) {
                         }
                     } else if (ctx.state == UI_STATE_VERSION_LIST) {
                         ctx.state = UI_STATE_SETTINGS_MENU;
+                    } else if (ctx.state == UI_STATE_HOSTING) {
+                        /* Signal server thread to stop; transition back to menu */
+                        atomic_store(&ctx.host_state.stop_requested, true);
+                        ctx.state = UI_STATE_SETTINGS_MENU;
                     } else if (ctx.state == UI_STATE_COMPLETE || ctx.state == UI_STATE_LIST ||
                                ctx.state == UI_STATE_NO_UPDATES || ctx.connection_failed) {
                         quit = 1;
@@ -1076,6 +1195,12 @@ bool run_update_window_with_check(void) {
                 }
             }
 
+        } else if (ctx.state == UI_STATE_HOSTING) {
+            if (!ctx.host_thread_launched) {
+                thread_create(ota_host_server_thread, &ctx.host_state, 16384);
+                ctx.host_thread_launched = true;
+            }
+            draw_hosting_window(&ctx);
         } else if (ctx.state == UI_STATE_NO_UPDATES) {
             draw_no_updates_window(&ctx);
         } else if (ctx.state == UI_STATE_LIST) {
