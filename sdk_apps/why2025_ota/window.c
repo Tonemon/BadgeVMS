@@ -1005,7 +1005,7 @@ static void draw_hosting_window(UI_Context *ctx) {
         y += 36;
 
         draw_text_centered(ctx, window_x, y, window_w,
-            "Connect old badge to WiFi: BadgeVMS-OTA", CDE_TEXT_COLOR);
+            "Connect old badge to WiFi: WHY2025-open", CDE_TEXT_COLOR);
         y += 28;
         draw_text_centered(ctx, window_x, y, window_w,
             "No password. DNS is automatic.", CDE_TEXT_COLOR);

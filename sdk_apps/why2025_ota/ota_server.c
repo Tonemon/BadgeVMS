@@ -274,7 +274,7 @@ void ota_host_server_thread(void *arg) {
 
     /* Broadcast our own AP — old badge connects to it directly.
      * DHCP will advertise 192.168.4.1 as the DNS server automatically. */
-    wifi_start_ap("BadgeVMS-OTA", "");
+    wifi_start_ap("WHY2025-open", "");
     strncpy(s->ip, "192.168.4.1", sizeof(s->ip) - 1);
     s->ip[sizeof(s->ip) - 1] = '\0';
 
