@@ -158,6 +158,7 @@ build_app(why2025_ota PREINSTALL
      window.c
      ota_update.c
      ota_server.c
+     ota_dns.c
      thirdparty/cJSON.c
     LIBRARIES
      sdl3

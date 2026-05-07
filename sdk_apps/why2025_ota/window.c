@@ -1,4 +1,5 @@
 #include "font.h"
+#include "ota_dns.h"
 #include "ota_server.h"
 #include "ota_update.h"
 
@@ -82,6 +83,8 @@ typedef struct {
     int              host_text_edit_cursor;
     ota_host_state_t host_state;
     bool             host_thread_launched;
+    ota_dns_state_t  dns_state;
+    bool             dns_thread_launched;
 } UI_Context;
 
 static inline Uint16 rgb888_to_rgb565(Uint32 rgb888) {
@@ -707,6 +710,8 @@ void handle_keyboard(UI_Context *ctx, SDL_Scancode key_code) {
                     memset(&ctx->host_state, 0, sizeof(ctx->host_state));
                     ctx->host_state.listen_fd = -1;
                     ctx->host_thread_launched = false;
+                    memset(&ctx->dns_state, 0, sizeof(ctx->dns_state));
+                    ctx->dns_thread_launched = false;
                     ctx->state = UI_STATE_HOSTING;
                     break;
                 case 2:
@@ -974,37 +979,42 @@ static void draw_hosting_window(UI_Context *ctx) {
 
     int y = window_y + title_h + 30;
 
-    bool running      = atomic_load(&ctx->host_state.running);
+    bool http_running = atomic_load(&ctx->host_state.running);
     bool stop_req     = atomic_load(&ctx->host_state.stop_requested);
+    bool dns_running  = atomic_load(&ctx->dns_state.running);
     int  req_count    = atomic_load(&ctx->host_state.requests_served);
+    int  dns_count    = atomic_load(&ctx->dns_state.queries_answered);
 
-    if (stop_req && !running) {
-        draw_text_centered(ctx, window_x, y, window_w, "Server stopped.", CDE_INACTIVE_TEXT);
-    } else if (!running) {
-        draw_text_centered(ctx, window_x, y, window_w, "Starting server...", CDE_TEXT_COLOR);
+    if (stop_req && !http_running) {
+        draw_text_centered(ctx, window_x, y, window_w, "Servers stopped.", CDE_INACTIVE_TEXT);
+    } else if (!http_running) {
+        draw_text_centered(ctx, window_x, y, window_w, "Starting servers...", CDE_TEXT_COLOR);
     } else {
-        /* Server is up — show connection info */
         char line[128];
 
-        snprintf(line, sizeof(line), "Server running at http://%s", ctx->host_state.ip);
+        snprintf(line, sizeof(line), "HTTP  running at http://%s", ctx->host_state.ip);
         draw_text_centered(ctx, window_x, y, window_w, line, CDE_SUCCESS_COLOR);
+        y += 28;
+
+        if (dns_running) {
+            snprintf(line, sizeof(line), "DNS   running at %s:53", ctx->host_state.ip);
+            draw_text_centered(ctx, window_x, y, window_w, line, CDE_SUCCESS_COLOR);
+        } else {
+            draw_text_centered(ctx, window_x, y, window_w, "DNS   starting...", CDE_TEXT_COLOR);
+        }
         y += 36;
 
         draw_text_centered(ctx, window_x, y, window_w,
-            "Configure your DNS or router to point", CDE_TEXT_COLOR);
+            "Point your router/hotspot DNS at the IP above.", CDE_TEXT_COLOR);
         y += 28;
         draw_text_centered(ctx, window_x, y, window_w,
-            "badge.why2025.org at the address above.", CDE_TEXT_COLOR);
-        y += 36;
-
-        snprintf(line, sizeof(line), "Connect old badge to the same WiFi network.");
-        draw_text_centered(ctx, window_x, y, window_w, line, CDE_TEXT_COLOR);
+            "Then connect old badge to the same network.", CDE_TEXT_COLOR);
         y += 36;
 
         draw_rect(ctx, window_x + 30, y, window_w - 60, 1, CDE_BORDER_DARK);
         y += 16;
 
-        snprintf(line, sizeof(line), "Requests served: %d", req_count);
+        snprintf(line, sizeof(line), "HTTP requests: %d   DNS queries: %d", req_count, dns_count);
         draw_text_centered(ctx, window_x, y, window_w, line, CDE_TEXT_COLOR);
     }
 
@@ -1143,8 +1153,8 @@ bool run_update_window_with_check(void) {
                     } else if (ctx.state == UI_STATE_VERSION_LIST) {
                         ctx.state = UI_STATE_SETTINGS_MENU;
                     } else if (ctx.state == UI_STATE_HOSTING) {
-                        /* Signal server thread to stop; transition back to menu */
                         atomic_store(&ctx.host_state.stop_requested, true);
+                        atomic_store(&ctx.dns_state.stop_requested, true);
                         ctx.state = UI_STATE_SETTINGS_MENU;
                     } else if (ctx.state == UI_STATE_COMPLETE || ctx.state == UI_STATE_LIST ||
                                ctx.state == UI_STATE_NO_UPDATES || ctx.connection_failed) {
@@ -1199,6 +1209,12 @@ bool run_update_window_with_check(void) {
             if (!ctx.host_thread_launched) {
                 thread_create(ota_host_server_thread, &ctx.host_state, 16384);
                 ctx.host_thread_launched = true;
+            }
+            /* Launch DNS thread once HTTP server has determined the local IP */
+            if (!ctx.dns_thread_launched && atomic_load(&ctx.host_state.running)) {
+                strncpy(ctx.dns_state.ip, ctx.host_state.ip, sizeof(ctx.dns_state.ip) - 1);
+                thread_create(ota_dns_server_thread, &ctx.dns_state, 8192);
+                ctx.dns_thread_launched = true;
             }
             draw_hosting_window(&ctx);
         } else if (ctx.state == UI_STATE_NO_UPDATES) {
