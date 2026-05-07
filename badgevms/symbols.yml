@@ -1136,6 +1136,8 @@ wrapped_function:
   - isatty
   - listen
   - localtime
+  - recvfrom
+  - sendto
   - lseek
   - malloc
   - mkdir

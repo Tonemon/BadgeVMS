@@ -522,6 +522,20 @@ int why_bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
     return bind(sock, (struct sockaddr *)addr_in, addrlen);
 }
 
+ssize_t why_recvfrom(int sockfd, void *buf, size_t len, int flags,
+                     struct sockaddr *src_addr, socklen_t *addrlen) {
+    int sock = _why_task_get_socket(sockfd);
+    if (sock < 0) { get_task_info()->_errno = EBADF; return -1; }
+    return recvfrom(sock, buf, len, flags, src_addr, addrlen);
+}
+
+ssize_t why_sendto(int sockfd, const void *buf, size_t len, int flags,
+                   const struct sockaddr *dest_addr, socklen_t addrlen) {
+    int sock = _why_task_get_socket(sockfd);
+    if (sock < 0) { get_task_info()->_errno = EBADF; return -1; }
+    return sendto(sock, buf, len, flags, dest_addr, addrlen);
+}
+
 int why_open(char const *pathname, int flags, mode_t mode) {
     task_info_t *task_info = get_task_info();
     ESP_LOGI("why_open", "Calling open from task %p for path %s", task_info->handle, pathname);
