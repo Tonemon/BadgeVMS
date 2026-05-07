@@ -81,6 +81,7 @@ static wifi_status_t status;
 static TaskHandle_t  hermes_handle;
 static QueueHandle_t hermes_queue;
 static esp_netif_t  *s_sta_netif = NULL;
+static esp_netif_t  *s_ap_netif  = NULL;
 
 static EventGroupHandle_t           wifi_event_group;
 static esp_event_handler_instance_t instance_any_id;
@@ -285,7 +286,7 @@ static void hermes_do_connect() {
     }
 
     ESP_ERROR_CHECK(esp_wifi_disconnect());
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_set_mode(s_ap_netif ? WIFI_MODE_APSTA : WIFI_MODE_STA));
 
     size_t size;
     char   ssid[32]     = "WHY2025-open";
@@ -701,6 +702,50 @@ void wifi_set_hostname(char const *hostname) {
     }
     if (s_sta_netif)
         esp_netif_set_hostname(s_sta_netif, hostname);
+}
+
+bool wifi_start_ap(const char *ssid, const char *password) {
+    if (!s_ap_netif) {
+        s_ap_netif = esp_netif_create_default_wifi_ap();
+        if (!s_ap_netif) return false;
+    }
+
+    /* Stop DHCP server before reconfiguring so we can cleanly restart it */
+    esp_netif_dhcps_stop(s_ap_netif);
+
+    wifi_config_t ap_config;
+    memset(&ap_config, 0, sizeof(ap_config));
+    strncpy((char *)ap_config.ap.ssid, ssid, sizeof(ap_config.ap.ssid) - 1);
+    ap_config.ap.ssid_len       = (uint8_t)strlen(ssid);
+    ap_config.ap.max_connection = 4;
+    ap_config.ap.channel        = 6;
+    if (password && password[0]) {
+        strncpy((char *)ap_config.ap.password, password, sizeof(ap_config.ap.password) - 1);
+        ap_config.ap.authmode = WIFI_AUTH_WPA2_PSK;
+    } else {
+        ap_config.ap.authmode = WIFI_AUTH_OPEN;
+    }
+
+    /* APSTA keeps any existing STA connection alive */
+    esp_err_t err = esp_wifi_set_mode(WIFI_MODE_APSTA);
+    if (err != ESP_OK) { ESP_LOGE(TAG, "set_mode APSTA failed: %d", err); return false; }
+
+    err = esp_wifi_set_config(WIFI_IF_AP, &ap_config);
+    if (err != ESP_OK) { ESP_LOGE(TAG, "set_config AP failed: %d", err); return false; }
+
+    esp_netif_dhcps_start(s_ap_netif);
+
+    ESP_LOGW(TAG, "AP started: ssid=%s open=%s", ssid, password && password[0] ? "no" : "yes");
+    return true;
+}
+
+void wifi_stop_ap(void) {
+    if (s_ap_netif) {
+        esp_netif_dhcps_stop(s_ap_netif);
+    }
+    /* Return to STA-only; harmless if STA is not connected */
+    esp_wifi_set_mode(WIFI_MODE_STA);
+    ESP_LOGW(TAG, "AP stopped");
 }
 
 device_t *wifi_create() {

@@ -1005,10 +1005,10 @@ static void draw_hosting_window(UI_Context *ctx) {
         y += 36;
 
         draw_text_centered(ctx, window_x, y, window_w,
-            "Point your router/hotspot DNS at the IP above.", CDE_TEXT_COLOR);
+            "Connect old badge to WiFi: BadgeVMS-OTA", CDE_TEXT_COLOR);
         y += 28;
         draw_text_centered(ctx, window_x, y, window_w,
-            "Then connect old badge to the same network.", CDE_TEXT_COLOR);
+            "No password. DNS is automatic.", CDE_TEXT_COLOR);
         y += 36;
 
         draw_rect(ctx, window_x + 30, y, window_w - 60, 1, CDE_BORDER_DARK);

@@ -957,6 +957,8 @@ simple_function:
   - wait
   - wifi_connect
   - wifi_disconnect
+  - wifi_start_ap
+  - wifi_stop_ap
   - wifi_get_connection_station
   - wifi_get_connection_status
   - wifi_get_status
