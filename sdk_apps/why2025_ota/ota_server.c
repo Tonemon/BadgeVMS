@@ -5,6 +5,7 @@
 #include <arpa/inet.h>
 #include <badgevms/application.h>
 #include <badgevms/ota.h>
+#include <badgevms/tls_server.h>
 #include <badgevms/wifi.h>
 #include <dirent.h>
 #include <netinet/in.h>
@@ -22,6 +23,28 @@
 #ifndef INADDR_ANY
 #define INADDR_ANY ((in_addr_t)0x00000000)
 #endif
+
+/* ── Connection abstraction (plain or TLS) ────────────────────── */
+
+typedef struct {
+    int        fd;
+    tls_conn_t tls; /* NULL for plain HTTP */
+} conn_ctx_t;
+
+static ssize_t conn_read(conn_ctx_t *c, void *buf, size_t len) {
+    if (c->tls) return tls_conn_read(c->tls, buf, len);
+    return read(c->fd, buf, len);
+}
+
+static ssize_t conn_write(conn_ctx_t *c, const void *buf, size_t len) {
+    if (c->tls) return tls_conn_write(c->tls, buf, len);
+    return write(c->fd, buf, len);
+}
+
+static void conn_close(conn_ctx_t *c) {
+    if (c->tls) tls_conn_close(c->tls);
+    close(c->fd);
+}
 
 bool ota_host_get_ip(char *ip_out, size_t len) {
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -54,7 +77,7 @@ bool ota_host_get_ip(char *ip_out, size_t len) {
 
 /* ── HTTP helpers ─────────────────────────────────────────────── */
 
-static void send_status_body(int fd, int code, const char *status,
+static void send_status_body(conn_ctx_t *c, int code, const char *status,
                              const char *ctype, const void *body, size_t blen) {
     char hdr[300];
     snprintf(hdr, sizeof(hdr),
@@ -64,28 +87,28 @@ static void send_status_body(int fd, int code, const char *status,
              "Connection: close\r\n"
              "\r\n",
              code, status, ctype, blen);
-    write(fd, hdr, strlen(hdr));
+    conn_write(c, hdr, strlen(hdr));
     if (body && blen)
-        write(fd, body, blen);
+        conn_write(c, body, blen);
 }
 
-static void send_text(int fd, int code, const char *status, const char *text) {
-    send_status_body(fd, code, status, "text/plain", text, strlen(text));
+static void send_text(conn_ctx_t *c, int code, const char *status, const char *text) {
+    send_status_body(c, code, status, "text/plain", text, strlen(text));
 }
 
-static void send_json_str(int fd, int code, const char *status, const char *json) {
-    send_status_body(fd, code, status, "application/json", json, strlen(json));
+static void send_json_str(conn_ctx_t *c, int code, const char *status, const char *json) {
+    send_status_body(c, code, status, "application/json", json, strlen(json));
 }
 
 /* ── Route handlers ───────────────────────────────────────────── */
 
-static void handle_ping(int fd) {
-    send_text(fd, 200, "OK", "pong");
+static void handle_ping(conn_ctx_t *c) {
+    send_text(c, 200, "OK", "pong");
 }
 
-static void handle_summaries(int fd) {
+static void handle_summaries(conn_ctx_t *c) {
     cJSON *arr = cJSON_CreateArray();
-    if (!arr) { send_text(fd, 500, "Error", "OOM"); return; }
+    if (!arr) { send_text(c, 500, "Error", "OOM"); return; }
 
     application_t          *app;
     application_list_handle list = application_list(&app);
@@ -105,22 +128,22 @@ static void handle_summaries(int fd) {
 
     char *json = cJSON_PrintUnformatted(arr);
     cJSON_Delete(arr);
-    if (json) { send_json_str(fd, 200, "OK", json); free(json); }
-    else       { send_text(fd, 500, "Error", "JSON OOM"); }
+    if (json) { send_json_str(c, 200, "OK", json); free(json); }
+    else       { send_text(c, 500, "Error", "JSON OOM"); }
 }
 
-static void handle_latest_revision(int fd, const char *slug) {
+static void handle_latest_revision(conn_ctx_t *c, const char *slug) {
     if (strcmp(slug, "why2025_firmware") == 0) {
-        send_text(fd, 200, "OK", "1\n");
+        send_text(c, 200, "OK", "1\n");
         return;
     }
     application_t *app = application_get(slug);
-    if (!app) { send_text(fd, 404, "Not Found", "404"); return; }
+    if (!app) { send_text(c, 404, "Not Found", "404"); return; }
     application_free(app);
-    send_text(fd, 200, "OK", "1\n");
+    send_text(c, 200, "OK", "1\n");
 }
 
-static void build_revision_json(int fd, const char *slug, const char *name,
+static void build_revision_json(conn_ctx_t *c, const char *slug, const char *name,
                                 const char *bin, const char *dir_path,
                                 const char *our_ip) {
     cJSON *root    = cJSON_CreateObject();
@@ -132,7 +155,7 @@ static void build_revision_json(int fd, const char *slug, const char *name,
 
     if (!root || !version || !meta || !app_arr || !app_obj || !files) {
         cJSON_Delete(root);
-        send_text(fd, 500, "Error", "OOM");
+        send_text(c, 500, "Error", "OOM");
         return;
     }
 
@@ -147,7 +170,6 @@ static void build_revision_json(int fd, const char *slug, const char *name,
     char url[512];
 
     if (dir_path) {
-        /* Enumerate all files in the app directory */
         DIR *dir = opendir(dir_path);
         if (dir) {
             struct dirent *entry;
@@ -166,7 +188,6 @@ static void build_revision_json(int fd, const char *slug, const char *name,
             closedir(dir);
         }
     } else {
-        /* Firmware binary (served from flash, not a directory) */
         cJSON *f1 = cJSON_CreateObject();
         snprintf(url, sizeof(url), "http://%s/api/v3/projects/%s/rev1/files/badgevms.bin",
                  our_ip, slug);
@@ -187,25 +208,22 @@ static void build_revision_json(int fd, const char *slug, const char *name,
 
     char *json = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
-    if (json) { send_json_str(fd, 200, "OK", json); free(json); }
-    else       { send_text(fd, 500, "Error", "JSON OOM"); }
+    if (json) { send_json_str(c, 200, "OK", json); free(json); }
+    else       { send_text(c, 500, "Error", "JSON OOM"); }
 }
 
-static void handle_revision_json(int fd, const char *slug, const char *our_ip) {
-    /* Firmware binary lives in flash, not in an app directory */
+static void handle_revision_json(conn_ctx_t *c, const char *slug, const char *our_ip) {
     if (strcmp(slug, "why2025_firmware") == 0) {
-        build_revision_json(fd, slug, "BadgeVMS Firmware", NULL, NULL, our_ip);
+        build_revision_json(c, slug, "BadgeVMS Firmware", NULL, NULL, our_ip);
         return;
     }
 
     application_t *app = application_get(slug);
-    if (!app) { send_text(fd, 404, "Not Found", "404"); return; }
+    if (!app) { send_text(c, 404, "Not Found", "404"); return; }
 
     const char *name = app->name        ? app->name        : slug;
     const char *bin  = app->binary_path ? app->binary_path : slug;
 
-    /* Get app directory path by building a file path and stripping the filename.
-     * Free app only after build_revision_json — name and bin point into app. */
     char *sample = application_create_file_string(app, "version.txt");
 
     char *dir_path = NULL;
@@ -215,12 +233,12 @@ static void handle_revision_json(int fd, const char *slug, const char *our_ip) {
         dir_path = sample;
     }
 
-    build_revision_json(fd, slug, name, bin, dir_path, our_ip);
+    build_revision_json(c, slug, name, bin, dir_path, our_ip);
     application_free(app);
     free(sample);
 }
 
-static void send_file_stream(int fd, FILE *f, long fsize) {
+static void send_file_stream(conn_ctx_t *c, FILE *f, long fsize) {
     char hdr[256];
     snprintf(hdr, sizeof(hdr),
              "HTTP/1.0 200 OK\r\n"
@@ -229,30 +247,29 @@ static void send_file_stream(int fd, FILE *f, long fsize) {
              "Connection: close\r\n"
              "\r\n",
              fsize);
-    write(fd, hdr, strlen(hdr));
+    conn_write(c, hdr, strlen(hdr));
 
     char   buf[4096];
     size_t n;
     while ((n = fread(buf, 1, sizeof(buf), f)) > 0)
-        write(fd, buf, n);
+        conn_write(c, buf, n);
 }
 
-static void handle_file(int fd, const char *slug, const char *filename) {
-    /* Firmware binary — served directly from the running OTA partition */
+static void handle_file(conn_ctx_t *c, const char *slug, const char *filename) {
     if (strcmp(slug, "why2025_firmware") == 0) {
         if (strcmp(filename, "version.txt") == 0) {
             char *ver = NULL;
             if (ota_get_running_version(&ver) && ver) {
-                send_text(fd, 200, "OK", ver);
+                send_text(c, 200, "OK", ver);
                 free(ver);
             } else {
-                send_text(fd, 200, "OK", "0");
+                send_text(c, 200, "OK", "0");
             }
             return;
         }
         if (strcmp(filename, "badgevms.bin") == 0) {
             size_t fwsize = ota_get_firmware_size();
-            if (!fwsize) { send_text(fd, 500, "Error", "Firmware size error"); return; }
+            if (!fwsize) { send_text(c, 500, "Error", "Firmware size error"); return; }
 
             char hdr[256];
             snprintf(hdr, sizeof(hdr),
@@ -262,7 +279,7 @@ static void handle_file(int fd, const char *slug, const char *filename) {
                      "Connection: close\r\n"
                      "\r\n",
                      fwsize);
-            write(fd, hdr, strlen(hdr));
+            conn_write(c, hdr, strlen(hdr));
 
             char   buf[4096];
             size_t offset = 0;
@@ -270,102 +287,119 @@ static void handle_file(int fd, const char *slug, const char *filename) {
                 size_t chunk = sizeof(buf);
                 if (offset + chunk > fwsize) chunk = fwsize - offset;
                 if (!ota_read_firmware(offset, buf, chunk)) break;
-                write(fd, buf, chunk);
+                conn_write(c, buf, chunk);
                 offset += chunk;
             }
             return;
         }
-        send_text(fd, 404, "Not Found", "404");
+        send_text(c, 404, "Not Found", "404");
         return;
     }
 
     application_t *app = application_get(slug);
-    if (!app) { send_text(fd, 404, "Not Found", "404"); return; }
+    if (!app) { send_text(c, 404, "Not Found", "404"); return; }
 
-    /* version.txt — serve version string from memory */
     if (strcmp(filename, "version.txt") == 0) {
         const char *ver = app->version ? app->version : "0";
-        send_text(fd, 200, "OK", ver);
+        send_text(c, 200, "OK", ver);
         application_free(app);
         return;
     }
 
-    /* Other files — read from filesystem */
     char *abs = application_create_file_string(app, filename);
     application_free(app);
 
-    if (!abs) { send_text(fd, 404, "Not Found", "Path error"); return; }
+    if (!abs) { send_text(c, 404, "Not Found", "Path error"); return; }
 
     FILE *f = fopen(abs, "r");
     free(abs);
-    if (!f) { send_text(fd, 404, "Not Found", "File not found"); return; }
+    if (!f) { send_text(c, 404, "Not Found", "File not found"); return; }
 
     fseek(f, 0, SEEK_END);
     long fsize = ftell(f);
     fseek(f, 0, SEEK_SET);
     if (fsize < 0) {
         fclose(f);
-        send_text(fd, 500, "Error", "Seek failed");
+        send_text(c, 500, "Error", "Seek failed");
         return;
     }
 
-    send_file_stream(fd, f, fsize);
+    send_file_stream(c, f, fsize);
     fclose(f);
 }
 
 /* ── URL dispatcher ───────────────────────────────────────────── */
 
-static void dispatch(int fd, const char *path, const char *our_ip) {
-    /* /api/v3/ping */
+static void dispatch(conn_ctx_t *c, const char *path, const char *our_ip) {
     if (strncmp(path, "/api/v3/ping", 12) == 0) {
-        handle_ping(fd);
+        handle_ping(c);
         return;
     }
-    /* /api/v3/project-summaries */
     if (strncmp(path, "/api/v3/project-summaries", 25) == 0) {
-        handle_summaries(fd);
+        handle_summaries(c);
         return;
     }
-    /* /api/v3/project-latest-revisions/{slug} */
     if (strncmp(path, "/api/v3/project-latest-revisions/", 33) == 0) {
-        handle_latest_revision(fd, path + 33);
+        handle_latest_revision(c, path + 33);
         return;
     }
-    /* /api/v3/projects/{slug}/... */
     if (strncmp(path, "/api/v3/projects/", 17) == 0) {
         const char *rest  = path + 17;
         const char *slash = strchr(rest, '/');
-        if (!slash) { send_text(fd, 404, "Not Found", "404"); return; }
+        if (!slash) { send_text(c, 404, "Not Found", "404"); return; }
 
         char   slug[128] = {0};
         size_t slen = (size_t)(slash - rest);
         if (slen >= sizeof(slug)) slen = sizeof(slug) - 1;
         memcpy(slug, rest, slen);
 
-        /* skip /rev{n} */
         const char *after  = slash + 1;
         const char *fslash = strchr(after, '/');
         if (!fslash) {
-            handle_revision_json(fd, slug, our_ip);
+            handle_revision_json(c, slug, our_ip);
             return;
         }
         if (strncmp(fslash, "/files/", 7) == 0) {
-            handle_file(fd, slug, fslash + 7);
+            handle_file(c, slug, fslash + 7);
             return;
         }
-        send_text(fd, 404, "Not Found", "404");
+        send_text(c, 404, "Not Found", "404");
         return;
     }
-    send_text(fd, 404, "Not Found", "404");
+    send_text(c, 404, "Not Found", "404");
 }
 
-/* ── Server loop (runs in background thread) ──────────────────── */
+/* ── Shared per-connection request handler ────────────────────── */
+
+static void handle_connection(conn_ctx_t *c, const char *our_ip,
+                               ota_host_state_t *s) {
+    char req[2048] = {0};
+    int  total     = 0;
+    while (total < (int)sizeof(req) - 1) {
+        ssize_t n = conn_read(c, req + total, sizeof(req) - 1 - total);
+        if (n <= 0) break;
+        total += (int)n;
+        if (strstr(req, "\r\n\r\n")) break;
+    }
+
+    char method[16] = {0}, path[512] = {0};
+    sscanf(req, "%15s %511s", method, path);
+
+    char *q = strchr(path, '?');
+    if (q) *q = '\0';
+
+    if (method[0] && path[0]) {
+        printf("[OTA host] %s %s\n", method, path);
+        dispatch(c, path, our_ip);
+        atomic_fetch_add(&s->requests_served, 1);
+    }
+}
+
+/* ── HTTP server loop (runs in background thread) ─────────────── */
 
 void ota_host_server_thread(void *arg) {
     ota_host_state_t *s = (ota_host_state_t *)arg;
 
-    /* Broadcast our own AP — old badge connects to it directly.
-     * DHCP will advertise 192.168.4.1 as the DNS server automatically. */
     wifi_start_ap("WHY2025-open", "");
     strncpy(s->ip, "192.168.4.1", sizeof(s->ip) - 1);
     s->ip[sizeof(s->ip) - 1] = '\0';
@@ -376,7 +410,6 @@ void ota_host_server_thread(void *arg) {
     int opt = 1;
     setsockopt(lfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
-    /* Short accept timeout so we can poll stop_requested */
     struct timeval tv = {.tv_sec = 1, .tv_usec = 0};
     setsockopt(lfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
@@ -395,45 +428,100 @@ void ota_host_server_thread(void *arg) {
 
     s->listen_fd = lfd;
     atomic_store(&s->running, true);
-    printf("[OTA host] listening on %s:%d\n", s->ip, OTA_HOST_PORT);
+    printf("[OTA host] HTTP listening on %s:%d\n", s->ip, OTA_HOST_PORT);
 
     while (!atomic_load(&s->stop_requested)) {
         struct sockaddr_in cli;
         socklen_t          cli_len = sizeof(cli);
         int cfd = accept(lfd, (struct sockaddr *)&cli, &cli_len);
-        if (cfd < 0) continue; /* timeout — re-check stop_requested */
+        if (cfd < 0) continue;
 
         struct timeval rtv = {.tv_sec = 10, .tv_usec = 0};
         setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &rtv, sizeof(rtv));
 
-        /* Read request headers */
-        char req[2048] = {0};
-        int  total     = 0;
-        while (total < (int)sizeof(req) - 1) {
-            ssize_t n = read(cfd, req + total, sizeof(req) - 1 - total);
-            if (n <= 0) break;
-            total += (int)n;
-            if (strstr(req, "\r\n\r\n")) break;
-        }
-
-        char method[16] = {0}, path[512] = {0};
-        sscanf(req, "%15s %511s", method, path);
-
-        /* Strip query string */
-        char *q = strchr(path, '?');
-        if (q) *q = '\0';
-
-        if (method[0] && path[0]) {
-            printf("[OTA host] %s %s\n", method, path);
-            dispatch(cfd, path, s->ip);
-            atomic_fetch_add(&s->requests_served, 1);
-        }
-        close(cfd);
+        conn_ctx_t c = { .fd = cfd, .tls = NULL };
+        handle_connection(&c, s->ip, s);
+        conn_close(&c);
     }
 
     close(lfd);
     s->listen_fd = -1;
     wifi_stop_ap();
     atomic_store(&s->running, false);
-    printf("[OTA host] stopped\n");
+    printf("[OTA host] HTTP stopped\n");
+}
+
+/* ── HTTPS server loop (runs in background thread) ────────────── */
+
+void ota_host_tls_server_thread(void *arg) {
+    ota_host_state_t *s = (ota_host_state_t *)arg;
+
+    /* Generate a self-signed certificate */
+    uint8_t *cert_der = NULL, *key_der = NULL;
+    size_t   cert_len = 0,     key_len  = 0;
+
+    printf("[OTA host] Generating self-signed certificate...\n");
+    if (!tls_generate_selfsigned(&cert_der, &cert_len, &key_der, &key_len)) {
+        printf("[OTA host] TLS cert generation failed, HTTPS not available\n");
+        return;
+    }
+    printf("[OTA host] Certificate generated (%zu bytes)\n", cert_len);
+
+    tls_server_ctx_t tls_ctx = tls_server_ctx_create(cert_der, cert_len, key_der, key_len);
+    free(cert_der);
+    free(key_der);
+
+    if (!tls_ctx) {
+        printf("[OTA host] TLS context creation failed, HTTPS not available\n");
+        return;
+    }
+
+    int lfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (lfd < 0) { tls_server_ctx_free(tls_ctx); return; }
+
+    int opt = 1;
+    setsockopt(lfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    struct timeval tv = {.tv_sec = 1, .tv_usec = 0};
+    setsockopt(lfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family      = AF_INET;
+    addr.sin_port        = htons(OTA_HOST_TLS_PORT);
+    addr.sin_addr.s_addr = INADDR_ANY;
+
+    if (bind(lfd, (struct sockaddr *)&addr, sizeof(addr)) < 0 ||
+        listen(lfd, 4) < 0) {
+        close(lfd);
+        tls_server_ctx_free(tls_ctx);
+        printf("[OTA host] HTTPS bind/listen failed\n");
+        return;
+    }
+
+    printf("[OTA host] HTTPS listening on %s:%d\n", s->ip, OTA_HOST_TLS_PORT);
+
+    while (!atomic_load(&s->stop_requested)) {
+        struct sockaddr_in cli;
+        socklen_t          cli_len = sizeof(cli);
+        int cfd = accept(lfd, (struct sockaddr *)&cli, &cli_len);
+        if (cfd < 0) continue;
+
+        struct timeval rtv = {.tv_sec = 10, .tv_usec = 0};
+        setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &rtv, sizeof(rtv));
+
+        tls_conn_t tls = tls_server_accept_fd(tls_ctx, cfd);
+        if (!tls) {
+            close(cfd);
+            continue;
+        }
+
+        conn_ctx_t c = { .fd = cfd, .tls = tls };
+        handle_connection(&c, s->ip, s);
+        conn_close(&c);
+    }
+
+    close(lfd);
+    tls_server_ctx_free(tls_ctx);
+    printf("[OTA host] HTTPS stopped\n");
 }

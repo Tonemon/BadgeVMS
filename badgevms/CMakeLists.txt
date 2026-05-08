@@ -29,6 +29,7 @@ idf_component_register(
      "pathfuncs.c"
      "task.c"
      "thirdparty/cJSON.c"
+     "tls_server.c"
      "thirdparty/dlmalloc.c"
      "thirdparty/tomlc17.c"
      "user_event.c"

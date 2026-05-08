@@ -83,6 +83,7 @@ typedef struct {
     int              host_text_edit_cursor;
     ota_host_state_t host_state;
     bool             host_thread_launched;
+    bool             tls_thread_launched;
     ota_dns_state_t  dns_state;
     bool             dns_thread_launched;
 } UI_Context;
@@ -428,7 +429,7 @@ void draw_update_window(UI_Context *ctx) {
 static void load_host_config(UI_Context *ctx) {
     strncpy(ctx->host_ssid, "WHY2025-open", sizeof(ctx->host_ssid) - 1);
     ctx->host_ssid[sizeof(ctx->host_ssid) - 1] = '\0';
-    ctx->host_self_signed_cert = false;
+    ctx->host_self_signed_cert = true;
 
     FILE *f = fopen("APPS:[badgevms_launcher]config.json", "r");
     if (!f) return;
@@ -710,6 +711,7 @@ void handle_keyboard(UI_Context *ctx, SDL_Scancode key_code) {
                     memset(&ctx->host_state, 0, sizeof(ctx->host_state));
                     ctx->host_state.listen_fd = -1;
                     ctx->host_thread_launched = false;
+                    ctx->tls_thread_launched  = false;
                     memset(&ctx->dns_state, 0, sizeof(ctx->dns_state));
                     ctx->dns_thread_launched = false;
                     ctx->state = UI_STATE_HOSTING;
@@ -996,6 +998,16 @@ static void draw_hosting_window(UI_Context *ctx) {
         draw_text_centered(ctx, window_x, y, window_w, line, CDE_SUCCESS_COLOR);
         y += 28;
 
+        if (ctx->host_self_signed_cert) {
+            if (ctx->tls_thread_launched) {
+                snprintf(line, sizeof(line), "HTTPS running at https://%s", ctx->host_state.ip);
+                draw_text_centered(ctx, window_x, y, window_w, line, CDE_SUCCESS_COLOR);
+            } else {
+                draw_text_centered(ctx, window_x, y, window_w, "HTTPS starting...", CDE_TEXT_COLOR);
+            }
+            y += 28;
+        }
+
         if (dns_running) {
             snprintf(line, sizeof(line), "DNS   running at %s:53", ctx->host_state.ip);
             draw_text_centered(ctx, window_x, y, window_w, line, CDE_SUCCESS_COLOR);
@@ -1014,7 +1026,7 @@ static void draw_hosting_window(UI_Context *ctx) {
         draw_rect(ctx, window_x + 30, y, window_w - 60, 1, CDE_BORDER_DARK);
         y += 16;
 
-        snprintf(line, sizeof(line), "HTTP requests: %d   DNS queries: %d", req_count, dns_count);
+        snprintf(line, sizeof(line), "Requests: %d   DNS queries: %d", req_count, dns_count);
         draw_text_centered(ctx, window_x, y, window_w, line, CDE_TEXT_COLOR);
     }
 
@@ -1210,11 +1222,17 @@ bool run_update_window_with_check(void) {
                 thread_create(ota_host_server_thread, &ctx.host_state, 16384);
                 ctx.host_thread_launched = true;
             }
-            /* Launch DNS thread once HTTP server has determined the local IP */
-            if (!ctx.dns_thread_launched && atomic_load(&ctx.host_state.running)) {
-                strncpy(ctx.dns_state.ip, ctx.host_state.ip, sizeof(ctx.dns_state.ip) - 1);
-                thread_create(ota_dns_server_thread, &ctx.dns_state, 8192);
-                ctx.dns_thread_launched = true;
+            /* Launch DNS and HTTPS threads once HTTP server has determined the local IP */
+            if (atomic_load(&ctx.host_state.running)) {
+                if (!ctx.dns_thread_launched) {
+                    strncpy(ctx.dns_state.ip, ctx.host_state.ip, sizeof(ctx.dns_state.ip) - 1);
+                    thread_create(ota_dns_server_thread, &ctx.dns_state, 8192);
+                    ctx.dns_thread_launched = true;
+                }
+                if (!ctx.tls_thread_launched && ctx.host_self_signed_cert) {
+                    thread_create(ota_host_tls_server_thread, &ctx.host_state, 16384);
+                    ctx.tls_thread_launched = true;
+                }
             }
             draw_hosting_window(&ctx);
         } else if (ctx.state == UI_STATE_NO_UPDATES) {
