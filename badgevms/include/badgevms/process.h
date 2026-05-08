@@ -40,3 +40,7 @@ void task_priority_restore();
 
 // Get the total number of running tasks.
 uint32_t get_num_tasks();
+
+// Translate a task-level fd (the virtual fd returned by accept/open in SDK app context)
+// to the underlying real kernel fd. Returns -1 if task_fd is invalid.
+int get_dev_fd(int task_fd);

@@ -427,7 +427,7 @@ int why_socket(int domain, int type, int protocol) {
 
 static inline int _why_task_get_socket(int fd) {
     task_info_t *task_info = get_task_info();
-    ESP_LOGW("why_open_socket", "Calling open socket from task %p fd %i", task_info->handle, fd);
+    ESP_LOGD("why_open_socket", "Calling open socket from task %p fd %i", task_info->handle, fd);
 
     if (fd < 0 || fd >= MAXFD || !task_info->thread->file_handles[fd].is_open) {
         task_info->_errno = EBADF;
@@ -624,6 +624,13 @@ int why_close(int fd) {
 out:
     task_info->_errno = EBADF;
     return -1;
+}
+
+int get_dev_fd(int task_fd) {
+    task_info_t *task_info = get_task_info();
+    if (task_fd < 0 || task_fd >= MAXFD || !task_info->thread->file_handles[task_fd].is_open)
+        return -1;
+    return task_info->thread->file_handles[task_fd].dev_fd;
 }
 
 pid_t why_getpid(void) {

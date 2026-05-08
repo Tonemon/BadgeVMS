@@ -5,6 +5,7 @@
 #include <arpa/inet.h>
 #include <badgevms/application.h>
 #include <badgevms/ota.h>
+#include <badgevms/process.h>
 #include <badgevms/tls_server.h>
 #include <badgevms/wifi.h>
 #include <dirent.h>
@@ -510,7 +511,8 @@ void ota_host_tls_server_thread(void *arg) {
         struct timeval rtv = {.tv_sec = 10, .tv_usec = 0};
         setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &rtv, sizeof(rtv));
 
-        tls_conn_t tls = tls_server_accept_fd(tls_ctx, cfd);
+        int real_fd = get_dev_fd(cfd);
+        tls_conn_t tls = (real_fd >= 0) ? tls_server_accept_fd(tls_ctx, real_fd) : NULL;
         if (!tls) {
             close(cfd);
             continue;

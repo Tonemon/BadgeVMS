@@ -1230,7 +1230,7 @@ bool run_update_window_with_check(void) {
                     ctx.dns_thread_launched = true;
                 }
                 if (!ctx.tls_thread_launched && ctx.host_self_signed_cert) {
-                    thread_create(ota_host_tls_server_thread, &ctx.host_state, 16384);
+                    thread_create(ota_host_tls_server_thread, &ctx.host_state, 32768);
                     ctx.tls_thread_launched = true;
                 }
             }

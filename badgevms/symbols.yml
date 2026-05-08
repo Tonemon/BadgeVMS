@@ -929,6 +929,7 @@ simple_function:
   - bt_set_own_name
   - device_get
   - get_mac_address
+  - get_dev_fd
   - get_num_tasks
   - compositor_get_autorotate
   - compositor_inject_keyboard_event
