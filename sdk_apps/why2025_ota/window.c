@@ -1028,6 +1028,14 @@ static void draw_hosting_window(UI_Context *ctx) {
 
         snprintf(line, sizeof(line), "Requests: %d   DNS queries: %d", req_count, dns_count);
         draw_text_centered(ctx, window_x, y, window_w, line, CDE_TEXT_COLOR);
+        y += 28;
+
+        if (atomic_load(&ctx->host_state.has_last_client)) {
+            snprintf(line, sizeof(line), "Last badge: %s @ %s",
+                     ctx->host_state.last_client_mac,
+                     ctx->host_state.last_client_ip);
+            draw_text_centered(ctx, window_x, y, window_w, line, CDE_SUCCESS_COLOR);
+        }
     }
 
     draw_text_centered(ctx, window_x, window_y + window_h - 45, window_w,

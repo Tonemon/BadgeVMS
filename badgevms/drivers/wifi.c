@@ -86,6 +86,13 @@ static esp_netif_t  *s_ap_netif  = NULL;
 static EventGroupHandle_t           wifi_event_group;
 static esp_event_handler_instance_t instance_any_id;
 static esp_event_handler_instance_t instance_got_ip;
+static esp_event_handler_instance_t instance_ap_ip;
+
+static void (*s_ap_sta_joined_cb)(const uint8_t *mac, const char *ip) = NULL;
+
+void wifi_set_ap_sta_joined_cb(void (*cb)(const uint8_t *mac, const char *ip)) {
+    s_ap_sta_joined_cb = cb;
+}
 
 #define MIN_SCAN_INTERVAL       10 * 1000 * 1000
 #define MIN_SCAN_INTERVAL_EMPTY 1000 * 1000
@@ -241,6 +248,20 @@ static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_
             ESP_LOGW(TAG, "User requested disconnect");
             xEventGroupSetBits(wifi_event_group, WIFI_DISCONNECTED_BIT);
         }
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_STACONNECTED) {
+        wifi_event_ap_staconnected_t *ev = (wifi_event_ap_staconnected_t *)event_data;
+        ESP_LOGI(TAG, "AP: station joined  MAC=%02x:%02x:%02x:%02x:%02x:%02x",
+                 ev->mac[0], ev->mac[1], ev->mac[2],
+                 ev->mac[3], ev->mac[4], ev->mac[5]);
+    } else if (event_base == IP_EVENT && event_id == IP_EVENT_AP_STAIPASSIGNED) {
+        ip_event_ap_staipassigned_t *ev = (ip_event_ap_staipassigned_t *)event_data;
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ev->ip));
+        ESP_LOGI(TAG, "AP: station IP assigned  MAC=%02x:%02x:%02x:%02x:%02x:%02x  IP=%s",
+                 ev->mac[0], ev->mac[1], ev->mac[2],
+                 ev->mac[3], ev->mac[4], ev->mac[5], ip_str);
+        if (s_ap_sta_joined_cb)
+            s_ap_sta_joined_cb(ev->mac, ip_str);
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
         ESP_LOGW(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
@@ -621,6 +642,9 @@ static void start_wifi() {
     );
     ESP_ERROR_CHECK(
         esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL, &instance_got_ip)
+    );
+    ESP_ERROR_CHECK(
+        esp_event_handler_instance_register(IP_EVENT, IP_EVENT_AP_STAIPASSIGNED, &event_handler, NULL, &instance_ap_ip)
     );
 
     s_sta_netif = esp_netif_create_default_wifi_sta();

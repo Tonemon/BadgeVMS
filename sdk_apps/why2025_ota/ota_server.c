@@ -8,6 +8,20 @@
 #include <badgevms/process.h>
 #include <badgevms/tls_server.h>
 #include <badgevms/wifi.h>
+
+static ota_host_state_t *g_host_state = NULL;
+
+static void ap_sta_joined(const uint8_t *mac, const char *ip) {
+    if (!g_host_state) return;
+    snprintf(g_host_state->last_client_mac, sizeof(g_host_state->last_client_mac),
+             "%02x:%02x:%02x:%02x:%02x:%02x",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    strncpy(g_host_state->last_client_ip, ip, sizeof(g_host_state->last_client_ip) - 1);
+    g_host_state->last_client_ip[sizeof(g_host_state->last_client_ip) - 1] = '\0';
+    atomic_store(&g_host_state->has_last_client, true);
+    printf("[OTA host] Badge joined: MAC=%s IP=%s\n",
+           g_host_state->last_client_mac, g_host_state->last_client_ip);
+}
 #include <dirent.h>
 #include <netinet/in.h>
 #include <stdio.h>
@@ -401,6 +415,8 @@ static void handle_connection(conn_ctx_t *c, const char *our_ip,
 void ota_host_server_thread(void *arg) {
     ota_host_state_t *s = (ota_host_state_t *)arg;
 
+    g_host_state = s;
+    wifi_set_ap_sta_joined_cb(ap_sta_joined);
     wifi_start_ap("WHY2025-open", "");
     strncpy(s->ip, "192.168.4.1", sizeof(s->ip) - 1);
     s->ip[sizeof(s->ip) - 1] = '\0';
@@ -447,6 +463,8 @@ void ota_host_server_thread(void *arg) {
 
     close(lfd);
     s->listen_fd = -1;
+    wifi_set_ap_sta_joined_cb(NULL);
+    g_host_state = NULL;
     wifi_stop_ap();
     atomic_store(&s->running, false);
     printf("[OTA host] HTTP stopped\n");

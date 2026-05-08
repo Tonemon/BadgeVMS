@@ -968,6 +968,7 @@ simple_function:
   - tls_conn_read
   - tls_conn_write
   - tls_conn_close
+  - wifi_set_ap_sta_joined_cb
   - wifi_start_ap
   - wifi_stop_ap
   - wifi_get_connection_station
