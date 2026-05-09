@@ -116,10 +116,14 @@ out:
     return ok;
 }
 
-tls_server_ctx_t tls_server_ctx_create(const uint8_t *cert_der, size_t cert_len,
-                                        const uint8_t *key_der,  size_t key_len) {
+tls_server_ctx_t tls_server_ctx_create(uint8_t *cert_der, size_t cert_len,
+                                        uint8_t *key_der,  size_t key_len) {
     tls_server_ctx_impl_t *s = calloc(1, sizeof(*s));
-    if (!s) return NULL;
+    if (!s) {
+        free(cert_der);
+        free(key_der);
+        return NULL;
+    }
 
     mbedtls_ssl_config_init(&s->conf);
     mbedtls_x509_crt_init(&s->cert);
@@ -130,27 +134,36 @@ tls_server_ctx_t tls_server_ctx_create(const uint8_t *cert_der, size_t cert_len,
     static const unsigned char pers[] = "badgevms_ota_srv";
     if (mbedtls_ctr_drbg_seed(&s->ctr_drbg, mbedtls_entropy_func, &s->entropy,
                                pers, sizeof(pers) - 1) != 0)
-        goto fail;
+        goto fail_both;
 
-    if (mbedtls_x509_crt_parse_der(&s->cert, cert_der, cert_len) != 0) goto fail;
+    int cert_rc = mbedtls_x509_crt_parse_der(&s->cert, cert_der, cert_len);
+    free(cert_der);  /* mbedTLS copies the DER; release before key parsing */
+    if (cert_rc != 0) goto fail_key;
 
-    if (mbedtls_pk_parse_key(&s->key, key_der, key_len, NULL, 0,
-                              mbedtls_ctr_drbg_random, &s->ctr_drbg) != 0)
-        goto fail;
+    int key_rc = mbedtls_pk_parse_key(&s->key, key_der, key_len, NULL, 0,
+                                       mbedtls_ctr_drbg_random, &s->ctr_drbg);
+    free(key_der);   /* mbedTLS copies the DER; release before any further allocs */
+    if (key_rc != 0) goto fail_none;
 
     if (mbedtls_ssl_config_defaults(&s->conf, MBEDTLS_SSL_IS_SERVER,
                                      MBEDTLS_SSL_TRANSPORT_STREAM,
                                      MBEDTLS_SSL_PRESET_DEFAULT) != 0)
-        goto fail;
+        goto fail_none;
 
     mbedtls_ssl_conf_rng(&s->conf, mbedtls_ctr_drbg_random, &s->ctr_drbg);
     mbedtls_ssl_conf_authmode(&s->conf, MBEDTLS_SSL_VERIFY_NONE);
 
-    if (mbedtls_ssl_conf_own_cert(&s->conf, &s->cert, &s->key) != 0) goto fail;
+    if (mbedtls_ssl_conf_own_cert(&s->conf, &s->cert, &s->key) != 0)
+        goto fail_none;
 
+    printf("[OTA host] TLS context ready\n");
     return (tls_server_ctx_t)s;
 
-fail:
+fail_both:
+    free(cert_der);
+fail_key:
+    free(key_der);
+fail_none:
     tls_server_ctx_free((tls_server_ctx_t)s);
     return NULL;
 }
@@ -207,7 +220,7 @@ ssize_t tls_conn_write(tls_conn_t conn, const void *buf, size_t len) {
     size_t             sent = 0;
     while (sent < len) {
         int ret = mbedtls_ssl_write(&c->ssl, ptr + sent, len - sent);
-        if (ret == MBEDTLS_ERR_SSL_WANT_WRITE) continue;
+        if (ret == MBEDTLS_ERR_SSL_WANT_WRITE) { usleep(1000); continue; }
         if (ret < 0) return sent > 0 ? (ssize_t)sent : -1;
         sent += (size_t)ret;
     }

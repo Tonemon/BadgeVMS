@@ -455,6 +455,7 @@ void ota_host_server_thread(void *arg) {
 
         struct timeval rtv = {.tv_sec = 10, .tv_usec = 0};
         setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &rtv, sizeof(rtv));
+        setsockopt(cfd, SOL_SOCKET, SO_SNDTIMEO, &rtv, sizeof(rtv));
 
         conn_ctx_t c = { .fd = cfd, .tls = NULL };
         handle_connection(&c, s->ip, s);
@@ -486,10 +487,8 @@ void ota_host_tls_server_thread(void *arg) {
     }
     printf("[OTA host] Certificate generated (%zu bytes)\n", cert_len);
 
+    /* tls_server_ctx_create takes ownership of cert_der/key_der and frees them */
     tls_server_ctx_t tls_ctx = tls_server_ctx_create(cert_der, cert_len, key_der, key_len);
-    free(cert_der);
-    free(key_der);
-
     if (!tls_ctx) {
         printf("[OTA host] TLS context creation failed, HTTPS not available\n");
         return;
@@ -528,6 +527,7 @@ void ota_host_tls_server_thread(void *arg) {
 
         struct timeval rtv = {.tv_sec = 10, .tv_usec = 0};
         setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &rtv, sizeof(rtv));
+        setsockopt(cfd, SOL_SOCKET, SO_SNDTIMEO, &rtv, sizeof(rtv));
 
         int real_fd = get_dev_fd(cfd);
         tls_conn_t tls = (real_fd >= 0) ? tls_server_accept_fd(tls_ctx, real_fd) : NULL;

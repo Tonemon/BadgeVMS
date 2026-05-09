@@ -21,11 +21,12 @@ bool tls_generate_selfsigned(uint8_t **cert_der, size_t *cert_len,
 
 /*
  * Create a TLS server context from DER-encoded cert and private key.
- * The cert_der/key_der buffers do not need to remain valid after this call.
+ * Takes ownership of cert_der and key_der (malloc'd by tls_generate_selfsigned);
+ * the caller must NOT free them — this function always frees them.
  * Returns NULL on error.
  */
-tls_server_ctx_t tls_server_ctx_create(const uint8_t *cert_der, size_t cert_len,
-                                        const uint8_t *key_der,  size_t key_len);
+tls_server_ctx_t tls_server_ctx_create(uint8_t *cert_der, size_t cert_len,
+                                        uint8_t *key_der,  size_t key_len);
 
 /* Free a TLS server context. */
 void tls_server_ctx_free(tls_server_ctx_t ctx);
