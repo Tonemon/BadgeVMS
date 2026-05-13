@@ -206,18 +206,23 @@ Three runs with TLS disabled (no cert generation, no HTTPS thread, no mbedTLS ca
 
 All three: identical register dump (MEPC `0x4a095ff8`, MTVAL `0x0000bad0`, T1 `0x4ff10134`). mbedTLS is not involved at any level. The only DMA subsystem still active is the WiFi driver.
 
-### Step 3 — Read DIAG_CB checkpoint output (pending reflash)
+### Step 3 — Read DIAG_CB checkpoint output ✅ Both clean — wifi_start_ap is innocent
 
-The `[OTA diag]` lines were absent from all crash logs — badge was running a pre-commit
-binary. Reflash with the latest build. With TLS disabled, only checkpoints A and B print:
+After reflashing, a no-laptop run produced:
 
 ```
-[OTA diag] ap_sta_joined[0]=0x???????? @ ota_host_server_thread:NNN   ← A (before wifi_set_ap_sta_joined_cb)
-[OTA diag] ap_sta_joined[0]=0x???????? @ ota_host_server_thread:NNN   ← B (after wifi_start_ap)
+[OTA diag] ap_sta_joined[0]=0xcc221101 @ ota_host_server_thread:425   ← A (before wifi_set_ap_sta_joined_cb)
+W (37147) wifi: AP started: ssid=WHY2025-open open=yes
+[OTA diag] ap_sta_joined[0]=0xcc221101 @ ota_host_server_thread:428   ← B (after wifi_start_ap)
 ```
 
-If B is already `0x0000bad0`, the WiFi AP init DMA corrupts the code before any frame
-is received. If both A and B are clean, the corruption happens later (during frame RX).
+`0xcc221101` is the correct `ap_sta_joined` prologue (`c.addi sp,-16` + `c.swsp ra,N(sp)`).
+Both checkpoints are clean. `wifi_start_ap` does not corrupt the code. The corruption
+happens during **ongoing WiFi operation** — beacon transmission or processing of probe
+requests from nearby devices — approximately 23 seconds after the AP started, with no
+client ever associated. This run ended as a WDT reset (`rst:0x7`) rather than an Illegal
+Instruction, meaning the DMA write landed on heap free-list metadata instead of code
+this time (same DMA, different victim address).
 
 ### Step 4 — Force WiFi RX buffers out of PSRAM (primary fix candidate)
 
@@ -361,5 +366,5 @@ the `ap_sta_joined` callback exactly as the old badge would.
 - [ ] Current crash (PSRAM code corruption at `0x4a095ff8`) — **investigating**
   - [x] `CONFIG_MBEDTLS_HARDWARE_ECC=n` — no change, eliminated
   - [x] Plain HTTP (no TLS, no mbedTLS) — crash still occurs, mbedTLS fully eliminated
-  - [ ] Pending: reflash latest build and read DIAG_CB checkpoints (Step 3)
+  - [x] DIAG_CB checkpoints A and B both clean — wifi_start_ap is innocent; corruption is from ongoing frame-RX DMA
   - [ ] Pending: try `CONFIG_ESP_WIFI_STATIC_RX_BUFFER=y` (Step 4) — primary fix candidate
