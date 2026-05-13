@@ -31,6 +31,10 @@
 #define CDE_ERROR_COLOR   0xA00000
 #define CDE_INACTIVE_TEXT 0x808080  /* same shade as CDE_TITLE_BG — intentional */
 
+#define ICON_ART   12
+#define ICON_SCALE  3
+#define ICON_INNER 44
+
 typedef enum {
     UI_STATE_SETTINGS_MENU,
     UI_STATE_HOST_SETTINGS,
@@ -189,6 +193,61 @@ void draw_checkbox(UI_Context *ctx, int x, int y, bool checked, Uint32 fg_color)
     if (checked) {
         draw_rect(ctx, x + 3, y + 3, s - 6, s - 6, fg_color);
     }
+}
+
+/* ── OTA pixel-art icons ──────────────────────────────────────────────────── *
+ * 12×12 bitmaps, bit 11 = col 0 (leftmost). Rendered at 3× scale (36×36 px)
+ * centred inside a 48×48 icon box.                                            */
+
+static const uint16_t ICON_GLOBE[ICON_ART] = {
+    0x1F8, 0x606, 0x8F1, 0xA65,   /* circle top, sides, meridian, lat */
+    0xFFF, 0xA65, 0x8F1, 0x606,   /* equator, lat, meridian, sides    */
+    0x1F8, 0x000, 0x000, 0x000,   /* circle bottom                    */
+};
+static const uint16_t ICON_UPLOAD[ICON_ART] = {
+    0x060, 0x1F8, 0x3FC, 0x060,   /* arrow tip, arrowhead, shaft      */
+    0x060, 0xFFF, 0x801, 0x9F9,   /* shaft, server top, frame, slots  */
+    0x801, 0x9F9, 0xFFF, 0x000,   /* frame, slots, server bottom      */
+};
+static const uint16_t ICON_SIGNAL[ICON_ART] = {
+    0x3FC, 0x402, 0x801, 0x000,   /* outer arc top, sides, gap        */
+    0x1F8, 0x204, 0x000, 0x0F0,   /* mid arc, sides, gap              */
+    0x108, 0x000, 0x060, 0x060,   /* inner arc, gap, dot              */
+};
+static const uint16_t ICON_LIST[ICON_ART] = {
+    0xFFF, 0x97D, 0x801, 0x979,   /* border, item1, gap, item2        */
+    0x801, 0x97D, 0x801, 0x961,   /* gap, item3, gap, item4 short     */
+    0x801, 0xFFF, 0x000, 0x000,   /* gap, border bottom               */
+};
+static const uint16_t ICON_REFRESH[ICON_ART] = {
+    0x060, 0x0F0, 0x1F8, 0x3FC,   /* up arrowhead                    */
+    0x060, 0x060, 0x060, 0x060,   /* shaft                           */
+    0x3FC, 0x1F8, 0x0F0, 0x060,   /* down arrowhead                  */
+};
+static const uint16_t ICON_LOCK[ICON_ART] = {
+    0x1F8, 0x108, 0x108, 0x108,   /* shackle arc top + sides         */
+    0xFFF, 0x801, 0x8E1, 0x861,   /* body top, walls, keyhole ring   */
+    0x841, 0x801, 0xFFF, 0x000,   /* keyhole stem, walls, body bot   */
+};
+
+static void draw_pixel_icon(UI_Context *ctx, int bx, int by,
+                             const uint16_t *bitmap, Uint32 color) {
+    int x0 = bx + 2 + (ICON_INNER - ICON_ART * ICON_SCALE) / 2;
+    int y0 = by + 2 + (ICON_INNER - ICON_ART * ICON_SCALE) / 2;
+    for (int row = 0; row < ICON_ART; row++) {
+        for (int col = 0; col < ICON_ART; col++) {
+            if (bitmap[row] & (0x800 >> col))
+                draw_rect(ctx, x0 + col * ICON_SCALE, y0 + row * ICON_SCALE,
+                          ICON_SCALE, ICON_SCALE, color);
+        }
+    }
+}
+
+static void draw_footer_bar(UI_Context *ctx, const char *text, Uint32 text_color) {
+    int wx = 30, wy = 30, ww = SCREEN_WIDTH - 60, wh = SCREEN_HEIGHT - 60;
+    draw_rect(ctx, wx + 3, wy + wh - 42, ww - 6, 39, CDE_BUTTON_COLOR);
+    draw_3d_border(ctx, wx + 3, wy + wh - 42, ww - 6, 39, 1);
+    draw_text(ctx, wx + 15, wy + wh - 35, text, text_color);
 }
 
 void draw_completion_window(UI_Context *ctx) {
