@@ -416,8 +416,16 @@ void ota_host_server_thread(void *arg) {
     ota_host_state_t *s = (ota_host_state_t *)arg;
 
     g_host_state = s;
+
+#define DIAG_CB() do { \
+    uint32_t _w; memcpy(&_w, (void *)ap_sta_joined, 4); \
+    printf("[OTA diag] ap_sta_joined[0]=0x%08lx @ %s:%d\n", (unsigned long)_w, __func__, __LINE__); \
+} while (0)
+
+    DIAG_CB(); /* before wifi_set_ap_sta_joined_cb */
     wifi_set_ap_sta_joined_cb(ap_sta_joined);
     wifi_start_ap("WHY2025-open", "");
+    DIAG_CB(); /* after wifi_start_ap */
     strncpy(s->ip, "192.168.4.1", sizeof(s->ip) - 1);
     s->ip[sizeof(s->ip) - 1] = '\0';
 
@@ -480,15 +488,18 @@ void ota_host_tls_server_thread(void *arg) {
     uint8_t *cert_der = NULL, *key_der = NULL;
     size_t   cert_len = 0,     key_len  = 0;
 
+    DIAG_CB(); /* before tls_generate_selfsigned */
     printf("[OTA host] Generating self-signed certificate...\n");
     if (!tls_generate_selfsigned(&cert_der, &cert_len, &key_der, &key_len)) {
         printf("[OTA host] TLS cert generation failed, HTTPS not available\n");
         return;
     }
+    DIAG_CB(); /* after tls_generate_selfsigned */
     printf("[OTA host] Certificate generated (%zu bytes)\n", cert_len);
 
     /* tls_server_ctx_create takes ownership of cert_der/key_der and frees them */
     tls_server_ctx_t tls_ctx = tls_server_ctx_create(cert_der, cert_len, key_der, key_len);
+    DIAG_CB(); /* after tls_server_ctx_create */
     if (!tls_ctx) {
         printf("[OTA host] TLS context creation failed, HTTPS not available\n");
         return;
