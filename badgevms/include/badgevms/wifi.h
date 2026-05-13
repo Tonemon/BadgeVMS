@@ -106,3 +106,18 @@ wifi_auth_mode_t wifi_station_get_mode(wifi_station_handle station);
 bool             wifi_station_wps(wifi_station_handle station);
 bool             wifi_set_connection_parameters(char const *ssid, char const *password);
 void             wifi_set_hostname(char const *hostname);
+void             wifi_set_mac_randomization(bool enabled);
+void             wifi_set_enabled(bool enabled);
+
+/* Callback fired when a station is assigned an IP by the AP DHCP server.
+ * mac is the 6-byte MAC of the joining station; ip is a NUL-terminated IPv4 string. */
+typedef void (*wifi_ap_sta_joined_cb_t)(const uint8_t *mac, const char *ip);
+void wifi_set_ap_sta_joined_cb(wifi_ap_sta_joined_cb_t cb);
+
+/* Access-point mode — badge broadcasts its own WiFi network.
+ * Uses APSTA so an existing STA connection is preserved.
+ * The AP interface is always at 192.168.4.1 with DHCP;
+ * DHCP automatically advertises 192.168.4.1 as the DNS server.
+ * Pass an empty string for password to create an open network. */
+bool wifi_start_ap(const char *ssid, const char *password);
+void wifi_stop_ap(void);

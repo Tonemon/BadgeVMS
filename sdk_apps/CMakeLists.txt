@@ -35,7 +35,7 @@ set(APP_ELF_DIR ${CMAKE_BINARY_DIR}/app_elfs)
 file(MAKE_DIRECTORY ${APP_ELF_DIR})
 
 function(build_app app_name)
-    cmake_parse_arguments(APP "PREINSTALL" "" "SOURCES;LIBRARIES;COMPILE_DEFINITIONS" ${ARGN})
+    cmake_parse_arguments(APP "PREINSTALL" "" "SOURCES;LIBRARIES;COMPILE_DEFINITIONS;INCLUDE_DIRS;EXTRA_FLAGS" ${ARGN})
 
     if(NOT APP_SOURCES)
         message(FATAL_ERROR "build_app: SOURCES must be specified for ${app_name}")
@@ -70,14 +70,23 @@ function(build_app app_name)
         endforeach()
     endif()
 
+    set(INCLUDE_FLAGS "")
+    if(APP_INCLUDE_DIRS)
+        foreach(DIR ${APP_INCLUDE_DIRS})
+            list(APPEND INCLUDE_FLAGS -I${DIR})
+        endforeach()
+    endif()
+
     add_custom_command(
         OUTPUT ${APP_ELF_DIR}/${app_name}.elf
         COMMAND ${CMAKE_C_COMPILER}
             ${APP_COMPILE_FLAGS}
+            ${APP_EXTRA_FLAGS}
             ${APP_LINK_FLAGS}
             -isystem${SDK_INCLUDE_DIR}
             -o ${APP_ELF_DIR}/${app_name}.elf
             -I ${APP_SOURCE_DIR}
+            ${INCLUDE_FLAGS}
             ${ABSOLUTE_SOURCES}
             ${LIBRARY_FLAGS}
             ${DEFINE_FLAGS}
@@ -129,6 +138,12 @@ endfunction()
 file(READ "${CMAKE_SOURCE_DIR}/version.txt" _BADGEVMS_VERSION_RAW)
 string(STRIP "${_BADGEVMS_VERSION_RAW}" BADGEVMS_VERSION)
 
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/badgevms_launcher/manifest.json" _LAUNCHER_MANIFEST)
+string(JSON LAUNCHER_APP_VERSION GET "${_LAUNCHER_MANIFEST}" "version")
+
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/badgevms_settings/manifest.json" _SETTINGS_MANIFEST)
+string(JSON SETTINGS_APP_VERSION GET "${_SETTINGS_MANIFEST}" "version")
+
 # Old OTA updater preinstalled at handout, doesn't build anymore due to api changes
 #build_app(ota_wifi_update
 #    SOURCES
@@ -142,6 +157,8 @@ build_app(why2025_ota PREINSTALL
      main.c
      window.c
      ota_update.c
+     ota_server.c
+     ota_dns.c
      thirdparty/cJSON.c
     LIBRARIES
      sdl3
@@ -154,6 +171,8 @@ build_app(badgevms_launcher PREINSTALL
      cJSON.c
     COMPILE_DEFINITIONS
      "BADGEVMS_VERSION=${BADGEVMS_VERSION}"
+     "LAUNCHER_APP_VERSION=\"${LAUNCHER_APP_VERSION}\""
+     "SETTINGS_APP_VERSION=\"${SETTINGS_APP_VERSION}\""
 )
 
 build_app(badgevms_settings PREINSTALL
@@ -268,6 +287,149 @@ build_app(doomgeneric PREINSTALL
      doomgeneric/z_zone.c
 )
 
+build_app(nes_launcher PREINSTALL
+    SOURCES
+     main.c
+     ${CMAKE_CURRENT_SOURCE_DIR}/shared/rom_browser.c
+)
+
+build_app(gb_launcher PREINSTALL
+    SOURCES
+     main.c
+     ${CMAKE_CURRENT_SOURCE_DIR}/shared/rom_browser.c
+)
+
+build_app(sms_launcher PREINSTALL
+    SOURCES
+     main.c
+     ${CMAKE_CURRENT_SOURCE_DIR}/shared/rom_browser.c
+)
+
+build_app(gb_emu PREINSTALL
+    SOURCES
+     gb_badgevms.c
+    INCLUDE_DIRS
+     ${CMAKE_CURRENT_SOURCE_DIR}/shared
+    COMPILE_DEFINITIONS
+     "PEANUT_GB_HIGH_LCD_ACCURACY=0"
+     NDEBUG
+    EXTRA_FLAGS
+     -O3
+)
+
+build_app(sms_emu PREINSTALL
+    SOURCES
+     sms_badgevms.c
+     core/sms.c
+     core/sms_bus.c
+     core/sms_z80.c
+     core/sms_joypad.c
+     core/sms_vdp.c
+     core/sms_rom_database.c
+     core/sms_savestate.c
+     core/scheduler.c
+     core/sn76489.c
+     core/blargg/blip_buf.c
+     core/blargg/blip_wrap.c
+    COMPILE_DEFINITIONS
+     "sms_static_assert=_Static_assert"
+     SMS_JUMPTABLE
+     NDEBUG
+    INCLUDE_DIRS
+     ${CMAKE_CURRENT_SOURCE_DIR}/sms_emu/core
+     ${CMAKE_CURRENT_SOURCE_DIR}/shared
+    EXTRA_FLAGS
+     -O3
+)
+
+build_app(nes_emu PREINSTALL
+    EXTRA_FLAGS
+     -O3
+    SOURCES
+     nes_badgevms.c
+     nofrendo/nofrendo.c
+     nofrendo/nes/apu.c
+     nofrendo/nes/cpu.c
+     nofrendo/nes/dis.c
+     nofrendo/nes/input.c
+     nofrendo/nes/mem.c
+     nofrendo/nes/mmc.c
+     nofrendo/nes/nes.c
+     nofrendo/nes/ppu.c
+     nofrendo/nes/rom.c
+     nofrendo/nes/state.c
+     nofrendo/mappers/map000.c
+     nofrendo/mappers/map001.c
+     nofrendo/mappers/map002.c
+     nofrendo/mappers/map003.c
+     nofrendo/mappers/map004.c
+     nofrendo/mappers/map005.c
+     nofrendo/mappers/map007.c
+     nofrendo/mappers/map009.c
+     nofrendo/mappers/map010.c
+     nofrendo/mappers/map011.c
+     nofrendo/mappers/map015.c
+     nofrendo/mappers/map016.c
+     nofrendo/mappers/map018.c
+     nofrendo/mappers/map019.c
+     nofrendo/mappers/map020.c
+     nofrendo/mappers/map021.c
+     nofrendo/mappers/map022.c
+     nofrendo/mappers/map023.c
+     nofrendo/mappers/map024.c
+     nofrendo/mappers/map030.c
+     nofrendo/mappers/map031.c
+     nofrendo/mappers/map032.c
+     nofrendo/mappers/map033.c
+     nofrendo/mappers/map034.c
+     nofrendo/mappers/map040.c
+     nofrendo/mappers/map041.c
+     nofrendo/mappers/map042.c
+     nofrendo/mappers/map046.c
+     nofrendo/mappers/map050.c
+     nofrendo/mappers/map064.c
+     nofrendo/mappers/map065.c
+     nofrendo/mappers/map066.c
+     nofrendo/mappers/map070.c
+     nofrendo/mappers/map071.c
+     nofrendo/mappers/map073.c
+     nofrendo/mappers/map074.c
+     nofrendo/mappers/map075.c
+     nofrendo/mappers/map076.c
+     nofrendo/mappers/map078.c
+     nofrendo/mappers/map079.c
+     nofrendo/mappers/map085.c
+     nofrendo/mappers/map087.c
+     nofrendo/mappers/map093.c
+     nofrendo/mappers/map094.c
+     nofrendo/mappers/map119.c
+     nofrendo/mappers/map160.c
+     nofrendo/mappers/map162.c
+     nofrendo/mappers/map176.c
+     nofrendo/mappers/map185.c
+     nofrendo/mappers/map191.c
+     nofrendo/mappers/map192.c
+     nofrendo/mappers/map193.c
+     nofrendo/mappers/map194.c
+     nofrendo/mappers/map195.c
+     nofrendo/mappers/map206.c
+     nofrendo/mappers/map228.c
+     nofrendo/mappers/map229.c
+     nofrendo/mappers/map231.c
+    COMPILE_DEFINITIONS
+     NES6502_JUMPTABLE
+     NDEBUG
+    INCLUDE_DIRS
+     ${CMAKE_CURRENT_SOURCE_DIR}/nes_emu/nofrendo
+     ${CMAKE_CURRENT_SOURCE_DIR}/shared
+)
+
+build_app(random_emu_game PREINSTALL
+    SOURCES
+     main.c
+     ${CMAKE_CURRENT_SOURCE_DIR}/shared/rom_browser.c
+)
+
 #
 # Diagnostic apps
 #
@@ -373,6 +535,13 @@ build_app(test_thread PREINSTALL
 build_app(test_wifi PREINSTALL
     SOURCES
      main.c
+)
+
+build_app(led_matrix_v1 PREINSTALL
+    SOURCES
+     main.c
+    LIBRARIES
+     sdl3
 )
 
 get_property(SDK_APP_ELFS GLOBAL PROPERTY SDK_APP_ELFS)

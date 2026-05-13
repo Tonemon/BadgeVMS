@@ -1,0 +1,8 @@
+{
+    "unique_identifier": "gb_emu",
+    "name": "Game Boy Emulator",
+    "author": "ThatOneGuy",
+    "version": "1",
+    "binary_path": "gb_emu.elf",
+    "hidden": true
+}

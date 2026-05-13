@@ -1,0 +1,7 @@
+{
+    "unique_identifier": "nes_launcher",
+    "name": "NES Launcher",
+    "author": "ThatOneGuy",
+    "version": "1",
+    "binary_path": "nes_launcher.elf"
+}

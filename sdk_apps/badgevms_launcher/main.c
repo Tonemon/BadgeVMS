@@ -8,6 +8,7 @@
 #include <badgevms/event.h>
 #include <badgevms/keyboard.h>
 #include <badgevms/wifi.h>
+#include <badgevms/bluetooth.h>
 #include <string.h>
 
 #include <badgevms/process.h>
@@ -59,6 +60,28 @@ static atomic_bool     g_scan_done  = false;
 static application_t **g_scan_apps  = NULL;
 static size_t          g_scan_count = 0;
 
+static bool app_is_hidden(const char *uid) {
+    char path[128];
+    snprintf(path, sizeof(path), "APPS:%s.json", uid);
+    FILE *f = fopen(path, "r");
+    if (!f) return false;
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    rewind(f);
+    char *buf = malloc((size_t)sz + 1);
+    if (!buf) { fclose(f); return false; }
+    fread(buf, 1, (size_t)sz, f);
+    buf[sz] = '\0';
+    fclose(f);
+    cJSON *json = cJSON_Parse(buf);
+    free(buf);
+    if (!json) return false;
+    cJSON *hidden = cJSON_GetObjectItem(json, "hidden");
+    bool result = cJSON_IsTrue(hidden);
+    cJSON_Delete(json);
+    return result;
+}
+
 static void scan_thread(void *unused) {
     (void)unused;
 
@@ -79,7 +102,8 @@ static void scan_thread(void *unused) {
         if (app->binary_path && strlen(app->binary_path) &&
             app->unique_identifier &&
             strcmp(app->unique_identifier, "badgevms_launcher")        != 0 &&
-            strcmp(app->unique_identifier, "why2025_firmware_ota_c6") != 0) {
+            strcmp(app->unique_identifier, "why2025_firmware_ota_c6") != 0 &&
+            !app_is_hidden(app->unique_identifier)) {
             application_t **tmp = realloc(apps, sizeof(application_t *) * (count + 1));
             if (!tmp) {
                 printf("Scan thread: OOM, stopping after %zu apps\n", count);
@@ -368,7 +392,7 @@ static uint16_t *get_app_icon(Launcher_Context *ctx, const char *uid) {
 
 static void draw_about_dialog(Launcher_Context *ctx) {
     int dialog_w = 450;
-    int dialog_h = 350;
+    int dialog_h = 390;
     int dialog_x = (SCREEN_WIDTH - dialog_w) / 2;
     int dialog_y = (SCREEN_HEIGHT - dialog_h) / 2;
 
@@ -395,7 +419,10 @@ static void draw_about_dialog(Launcher_Context *ctx) {
         CDE_INACTIVE_TEXT
     );
 
-    draw_text_centered(ctx, dialog_x, content_y + 120, dialog_w, "Press ENTER or ESC to close", CDE_INACTIVE_TEXT);
+    draw_text_centered(ctx, dialog_x, content_y + 95, dialog_w, "Launcher v" LAUNCHER_APP_VERSION, CDE_TEXT_COLOR);
+    draw_text_centered(ctx, dialog_x, content_y + 115, dialog_w, "Settings v" SETTINGS_APP_VERSION, CDE_TEXT_COLOR);
+
+    draw_text_centered(ctx, dialog_x, content_y + 155, dialog_w, "Press ENTER or ESC to close", CDE_INACTIVE_TEXT);
 }
 
 static void draw_launcher_window(Launcher_Context *ctx) {
@@ -756,9 +783,11 @@ static const char * const TERM_DMESG[] = {
     "[    0.012881] wifi: MAC de:ad:be:ef:ca:fe",
     "[    0.013507] wifi: mode station",
     /* line 11 = hostname, built dynamically at runtime */
+    /* line 12 = bluetooth name, built dynamically at runtime */
+    /* line 13 = bluetooth addr, built dynamically at runtime */
 };
 #define TERM_DMESG_STATIC  11
-#define TERM_DMESG_TOTAL   12
+#define TERM_DMESG_TOTAL   14
 
 static const char * const TERM_ART[] = {
     "  ___           _           _   ___  __  _______",
@@ -772,7 +801,9 @@ static const char * const TERM_ART[] = {
 static void draw_terminal_boot_screen(
     Launcher_Context *ctx,
     uint32_t          elapsed_ms,
-    const char       *hostname
+    const char       *hostname,
+    const char       *bt_name,
+    const char       *bt_addr
 ) {
     memset(ctx->pixels, 0, SCREEN_WIDTH * SCREEN_HEIGHT * sizeof(uint16_t));
 
@@ -780,6 +811,16 @@ static void draw_terminal_boot_screen(
     snprintf(host_line, sizeof(host_line),
              "[    0.014230] network: hostname %s",
              (hostname && hostname[0]) ? hostname : "why2025badge");
+
+    char bt_name_line[72];
+    snprintf(bt_name_line, sizeof(bt_name_line),
+             "[    0.015100] bluetooth: name %s",
+             (bt_name && bt_name[0]) ? bt_name : "WHY2025");
+
+    char bt_addr_line[72];
+    snprintf(bt_addr_line, sizeof(bt_addr_line),
+             "[    0.015780] bluetooth: addr %s",
+             (bt_addr && bt_addr[0]) ? bt_addr : "??:??:??:??:??:??");
 
     const int x0 = 8;
     const int lh = 26;   /* font 24 px + 2 px gap */
@@ -789,7 +830,11 @@ static void draw_terminal_boot_screen(
     if (nvis > TERM_DMESG_TOTAL) nvis = TERM_DMESG_TOTAL;
 
     for (int i = 0; i < nvis; i++) {
-        const char *line = (i < TERM_DMESG_STATIC) ? TERM_DMESG[i] : host_line;
+        const char *line;
+        if (i < TERM_DMESG_STATIC)       line = TERM_DMESG[i];
+        else if (i == TERM_DMESG_STATIC)  line = host_line;
+        else if (i == TERM_DMESG_STATIC + 1) line = bt_name_line;
+        else                              line = bt_addr_line;
         draw_text(ctx, x0, y, line, 0x808080);
         y += lh;
     }
@@ -1040,8 +1085,9 @@ int main(int argc, char *argv[]) {
     /* 5. Read badge identity and boot animation choice from config (non-fatal) */
     char boot_owner_name[64]  = {0};
     char boot_hostname[128]   = "why2025badge";
+    char boot_bt_name[32]     = {0};
     bool boot_display_name    = false;
-    int  boot_animation       = 0;   /* 0 = splash, 1 = terminal */
+    int  boot_animation       = 0;   /* 0 = splash, 1 = terminal, 2 = both */
     {
         FILE *cfg_f = fopen("APPS:[badgevms_launcher]config.json", "r");
         if (cfg_f) {
@@ -1060,6 +1106,9 @@ int main(int argc, char *argv[]) {
                         cJSON *bon = cJSON_GetObjectItem(cfg, "badge_owner_name");
                         cJSON *hn  = cJSON_GetObjectItem(cfg, "hostname");
                         cJSON *ba  = cJSON_GetObjectItem(cfg, "boot_animation");
+                        cJSON *we  = cJSON_GetObjectItem(cfg, "wifi_enabled");
+                        cJSON *btn = cJSON_GetObjectItem(cfg, "bt_name");
+                        cJSON *bte = cJSON_GetObjectItem(cfg, "bt_enabled");
                         if (cJSON_IsBool(dub) && cJSON_IsTrue(dub))
                             boot_display_name = true;
                         if (cJSON_IsString(bon) && bon->valuestring)
@@ -1070,6 +1119,13 @@ int main(int argc, char *argv[]) {
                                     sizeof(boot_hostname) - 1);
                         if (cJSON_IsNumber(ba))
                             boot_animation = (int)cJSON_GetNumberValue(ba);
+                        if (cJSON_IsBool(we) && !cJSON_IsTrue(we))
+                            wifi_set_enabled(false);
+                        if (cJSON_IsString(btn) && btn->valuestring)
+                            strncpy(boot_bt_name, btn->valuestring,
+                                    sizeof(boot_bt_name) - 1);
+                        if (cJSON_IsBool(bte) && !cJSON_IsTrue(bte))
+                            bt_set_enabled(false);
                         cJSON_Delete(cfg);
                     }
                 }
@@ -1078,7 +1134,18 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    /* 6. Boot animation loop — runs until scan done AND 2000 ms elapsed */
+    /* Apply BT name override and get address for terminal display */
+    if (boot_bt_name[0])
+        bt_set_own_name(boot_bt_name);
+    const char *effective_bt_name = boot_bt_name[0] ? boot_bt_name : bt_get_own_name();
+    char boot_bt_addr[18] = {0};
+    bt_get_own_addr_str(boot_bt_addr, sizeof(boot_bt_addr));
+
+    /* 6. Boot animation loop — runs until scan done AND minimum elapsed:
+     *    splash/terminal: 2000 ms; both: 3000 ms (2000 ms terminal + 1000 ms splash) */
+#define BOTH_SWITCH_MS 2000u
+#define BOTH_MIN_MS    3000u
+
     Launcher_Context boot_ctx = {0};
     boot_ctx.pixels = framebuffer->pixels;
 
@@ -1094,15 +1161,18 @@ int main(int argc, char *argv[]) {
         float bright    = 0.875f + 0.125f * sinf(2.0f * (float)M_PI * elapsed_ms / 2000.0f);
         int   dot_count = (int)(elapsed_ms / 500) % 4;
 
-        if (boot_animation == 1) {
-            draw_terminal_boot_screen(&boot_ctx, elapsed_ms, boot_hostname);
+        if (boot_animation == 1 ||
+            (boot_animation == 2 && elapsed_ms < BOTH_SWITCH_MS)) {
+            draw_terminal_boot_screen(&boot_ctx, elapsed_ms, boot_hostname,
+                                      effective_bt_name, boot_bt_addr);
         } else {
             draw_boot_screen(&boot_ctx, logo_data, logo_w, logo_h, logo_ch, bright, dot_count,
                              boot_display_name ? boot_owner_name : NULL);
         }
         window_present(window, true, NULL, 0);
 
-        if (atomic_load(&g_scan_done) && elapsed_ms >= 2000)
+        uint32_t min_ms = (boot_animation == 2) ? BOTH_MIN_MS : 2000u;
+        if (atomic_load(&g_scan_done) && elapsed_ms >= min_ms)
             break;
 
         usleep(33 * 1000); /* ~30 fps */
@@ -1140,6 +1210,9 @@ int main(int argc, char *argv[]) {
                                     sizeof(default_app_uid) - 1);
                         if (cJSON_IsString(hn) && hn->valuestring && hn->valuestring[0])
                             wifi_set_hostname(hn->valuestring);
+                        cJSON *mr = cJSON_GetObjectItem(cfg_json, "mac_randomization");
+                        if (cJSON_IsBool(mr))
+                            wifi_set_mac_randomization(cJSON_IsTrue(mr));
                         cJSON_Delete(cfg_json);
                     }
                 }

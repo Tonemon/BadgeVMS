@@ -1,0 +1,7 @@
+{
+    "unique_identifier": "random_emu_game",
+    "name": "Start Random Emulator Game",
+    "author": "ThatOneGuy",
+    "version": "1",
+    "binary_path": "random_emu_game.elf"
+}

@@ -1,0 +1,10 @@
+{
+    "unique_identifier": "led_matrix_v1",
+    "name": "LED Matrix v1",
+    "author": "ThatOneGuy",
+    "version": "1.0",
+    "interpreter": "",
+    "metadata_file": "",
+    "binary_path": "led_matrix_v1.elf",
+    "source": 1
+}

@@ -14,11 +14,13 @@ idf_component_register(
      "drivers/esp-serial-flasher/slave_c6_flasher.c"
      "drivers/esp-serial-flasher/why2025_firmware.c"
      "drivers/fatfs.c"
+     "drivers/pca9698.c"
      "drivers/socket.c"
      "drivers/st7703.c"
      "drivers/tca8418.c"
      "drivers/tty.c"
      "drivers/wifi.c"
+     "drivers/bluetooth.c"
      "init.c"
      "logical_names.c"
      "memory.c"
@@ -27,6 +29,7 @@ idf_component_register(
      "pathfuncs.c"
      "task.c"
      "thirdparty/cJSON.c"
+     "tls_server.c"
      "thirdparty/dlmalloc.c"
      "thirdparty/tomlc17.c"
      "user_event.c"
@@ -58,6 +61,7 @@ idf_component_register(
      "lwip"
      "mbedtls"
      "nvs_flash"
+     "bt"
      "sd_card"
      "spi_flash"
      "vfs"
@@ -99,6 +103,7 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     HAVE_MREMAP=0
     MORECORE=why_sbrk
     MORECORE_CONTIGUOUS=1
+    MORECORE_CANNOT_TRIM=1
     NO_MALLINFO
     malloc_getpagesize=0x10000
 )

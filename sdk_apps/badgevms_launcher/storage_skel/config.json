@@ -2,8 +2,12 @@
   "launch_default_app": false,
   "default_app": "why2025_sponsors",
   "hostname": "why2025badge",
-  "badge_owner_name": "John",
+  "badge_owner_name": "ThatOneGuy",
   "display_username_at_boot": false,
   "autorotate": false,
-  "boot_animation": 0
+  "mac_randomization": true,
+  "boot_animation": 2,
+  "wifi_enabled": true,
+  "bt_enabled": true,
+  "bt_name": ""
 }

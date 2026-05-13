@@ -1,0 +1,8 @@
+{
+    "unique_identifier": "nes_emu",
+    "name": "NES Emulator",
+    "author": "ThatOneGuy",
+    "version": "1",
+    "binary_path": "nes_emu.elf",
+    "hidden": true
+}
