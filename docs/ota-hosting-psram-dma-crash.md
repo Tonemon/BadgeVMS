@@ -194,69 +194,52 @@ System WDT fires.
 
 ### Step 1 — Disable hardware ECC ✅ Eliminated
 
-`CONFIG_MBEDTLS_HARDWARE_ECC=n` was tested. Register dump byte-for-byte identical. Not the cause.
+`CONFIG_MBEDTLS_HARDWARE_ECC=n` tested. Register dump byte-for-byte identical. Not the cause.
 
-### Step 2 — Test plain HTTP (no TLS) ✅ Crash persists — mbedTLS fully eliminated
+### Step 2 — Test plain HTTP (no TLS) ✅ Crash persists (AMPDU RX was still on)
 
-Three runs with TLS disabled (no cert generation, no HTTPS thread, no mbedTLS calls):
+Three runs with TLS disabled. All identical register dump. mbedTLS not needed for crash. Note: AMPDU RX was still enabled in these runs.
 
-- **Run A**: crash on second `IP_EVENT_AP_STAIPASSIGNED` after laptop connected and served HTTP requests
-- **Run B**: crash before laptop connected at all — AP beaconing alone was sufficient
-- **Run C**: crash during laptop 802.11 association/DHCP exchange
+- **Run A**: crash on second DHCP after laptop connected and served HTTP
+- **Run B**: crash before laptop connected — AP beaconing alone sufficient (~23 s)
+- **Run C**: crash during laptop 802.11 association
 
-All three: identical register dump (MEPC `0x4a095ff8`, MTVAL `0x0000bad0`, T1 `0x4ff10134`). mbedTLS is not involved at any level. The only DMA subsystem still active is the WiFi driver.
-
-### Step 3 — Read DIAG_CB checkpoint output ✅ Both clean — wifi_start_ap is innocent
-
-After reflashing, a no-laptop run produced:
+### Step 3 — DIAG_CB checkpoints ✅ A+B clean — wifi_start_ap is innocent
 
 ```
-[OTA diag] ap_sta_joined[0]=0xcc221101 @ ota_host_server_thread:425   ← A (before wifi_set_ap_sta_joined_cb)
+[OTA diag] ap_sta_joined[0]=0xcc221101 @ ota_host_server_thread:425   ← A
 W (37147) wifi: AP started: ssid=WHY2025-open open=yes
-[OTA diag] ap_sta_joined[0]=0xcc221101 @ ota_host_server_thread:428   ← B (after wifi_start_ap)
+[OTA diag] ap_sta_joined[0]=0xcc221101 @ ota_host_server_thread:428   ← B
 ```
 
-`0xcc221101` is the correct `ap_sta_joined` prologue (`c.addi sp,-16` + `c.swsp ra,N(sp)`).
-Both checkpoints are clean. `wifi_start_ap` does not corrupt the code. The corruption
-happens during **ongoing WiFi operation** — beacon transmission or processing of probe
-requests from nearby devices — approximately 23 seconds after the AP started, with no
-client ever associated. This run ended as a WDT reset (`rst:0x7`) rather than an Illegal
-Instruction, meaning the DMA write landed on heap free-list metadata instead of code
-this time (same DMA, different victim address).
+`0xcc221101` = correct prologue (`c.addi sp,-16` + `c.swsp ra,N(sp)`). Corruption happens during ongoing WiFi operation (~23 s), not during init. Run ended as WDT reset (heap metadata hit this time).
 
-### Step 4 — Disable AMPDU RX (primary fix candidate)
+### Step 4 — Disable AMPDU RX ⚠️ Crash persists with TLS on
 
-`SPIRAM_USE_MEMMAP=y` is set — the standard heap is internal SRAM only, not PSRAM.
-`SPIRAM_TRY_ALLOCATE_WIFI_LWIP` is not applicable (depends on CAPS_ALLOC or MALLOC,
-neither of which is active). WiFi static and dynamic buffers are already in internal
-RAM. The DMA is NOT writing to a PSRAM-based WiFi buffer at the wrong address; it is
-writing a received 802.11 frame to the wrong PSRAM address entirely.
+Applied: `# CONFIG_ESP_WIFI_AMPDU_RX_ENABLED is not set`. With TLS enabled, crash still occurs on launch before any client connects. The plain-HTTP runs (Steps 2/3) all had AMPDU RX on, so we cannot confirm AMPDU was their cause.
 
-The 4 bytes written (`D0 BA 00 00` in memory, little-endian word `0x0000BAD0`) decode as:
+### Step 4b — Full test matrix
 
-| Byte | Value | Meaning |
-|---|---|---|
-| 0 | `0xD0` | 802.11 FC byte 0: Management frame, subtype 13 = **Action** |
-| 1 | `0xBA` | 802.11 FC byte 1: flags |
-| 2–3 | `0x00 0x00` | Duration/ID = 0 |
+| ECC | MPI | AMPDU RX | TLS | Result |
+|-----|-----|----------|-----|--------|
+| on  | on  | on  | on  | crash |
+| off | on  | on  | on  | crash — ECC eliminated |
+| off | on  | on  | off | crash ~23 s (DIAG_CB A+B clean) |
+| off | on  | off | on  | crash — AMPDU RX not the sole cause |
+| off | **off** | off | on  | **pending** |
+| off | on  | off | off | **pending** — would confirm AMPDU fixed WiFi-only path |
 
-This is the first 4 bytes of a received **802.11 Action frame** — the frame type used
-for AMPDU Block Ack negotiation (AddBA Request/Response). With AMPDU RX enabled, the
-WiFi driver sets up dedicated DMA descriptors for the Block Ack RX path. A bug in that
-descriptor's buffer address causes the received frame to land at `0x4a095ff8` (PSRAM,
-inside `ap_sta_joined`) instead of the intended internal SRAM buffer.
+Hardware MPI was never isolated: we went from ECC-off to TLS-off, skipping MPI-off with TLS-on. MPI is active in every TLS-on run. `SPIRAM_USE_MEMMAP=y` confirms the standard heap is internal SRAM only — WiFi buffers do not come from PSRAM.
 
-Applied fix:
+### Step 5 — Disable hardware MPI (applied)
 
 ```
-# CONFIG_ESP_WIFI_AMPDU_RX_ENABLED is not set
-# (CONFIG_ESP_WIFI_RX_BA_WIN removed — depends on AMPDU_RX)
+# CONFIG_MBEDTLS_HARDWARE_MPI is not set
 ```
 
-Rebuild and retest. If the crash disappears, the AMPDU RX DMA descriptor bug is the
-root cause. AMPDU TX is left enabled; only the RX Block Ack path has the wrong address.
+With hardware MPI disabled, `tls_generate_selfsigned` falls back to software big-number arithmetic. No MPI DMA transfers happen. If the crash disappears with TLS on, hardware MPI DMA is confirmed as the TLS-path cause. If it only slows the crash (from immediate to ~23 s), there is a second WiFi-path bug separate from MPI.
 
-### Step 5 — Heap integrity alongside code corruption (supplementary)
+### Step 6 — Heap integrity alongside code corruption (supplementary)
 
 Add temporarily to `wifi.c` before `s_ap_sta_joined_cb` is called:
 
@@ -269,8 +252,7 @@ if (s_ap_sta_joined_cb)
     s_ap_sta_joined_cb(ev->mac, ip_str);
 ```
 
-If the heap check also fails, the DMA write hit both code and heap metadata. If it
-passes, the write landed in executable PSRAM outside the heap's bookkeeping structures.
+If heap check also fails, the DMA write hit both code and heap metadata. If it passes, only executable PSRAM was hit.
 
 ---
 
