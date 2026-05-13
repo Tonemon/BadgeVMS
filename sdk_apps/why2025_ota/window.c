@@ -184,17 +184,6 @@ void draw_3d_border(UI_Context *ctx, int x, int y, int w, int h, int inset) {
     draw_rect(ctx, x + w - 3, y, 3, h, dark_color);
 }
 
-void draw_checkbox(UI_Context *ctx, int x, int y, bool checked, Uint32 fg_color) {
-    int s = 16;
-    draw_rect(ctx, x, y, s, 1, fg_color);
-    draw_rect(ctx, x, y + s - 1, s, 1, fg_color);
-    draw_rect(ctx, x, y, 1, s, fg_color);
-    draw_rect(ctx, x + s - 1, y, 1, s, fg_color);
-    if (checked) {
-        draw_rect(ctx, x + 3, y + 3, s - 6, s - 6, fg_color);
-    }
-}
-
 /* ── OTA pixel-art icons ──────────────────────────────────────────────────── *
  * 12×12 bitmaps, bit 11 = col 0 (leftmost). Rendered at 3× scale (36×36 px)
  * centred inside a 48×48 icon box.                                            */
@@ -377,7 +366,6 @@ void draw_update_window(UI_Context *ctx) {
     int window_h = SCREEN_HEIGHT - 60;
 
     draw_rect(ctx, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, CDE_BG_COLOR);
-
     draw_rect(ctx, window_x, window_y, window_w, window_h, CDE_PANEL_COLOR);
     draw_3d_border(ctx, window_x, window_y, window_w, window_h, 0);
 
@@ -389,57 +377,73 @@ void draw_update_window(UI_Context *ctx) {
     for (int i = 0; i < ctx->total_items; i++) {
         if (ctx->updates[i].selected) selected_count++;
     }
-
     char count_text[64];
-    snprintf(count_text, sizeof(count_text), "Available: %d  Selected: %d", ctx->total_items, selected_count);
-    draw_text(ctx, window_x + 15, window_y + title_h + 20, count_text, CDE_TEXT_COLOR);
+    snprintf(count_text, sizeof(count_text), "Available: %d  Selected: %d",
+             ctx->total_items, selected_count);
+    draw_text(ctx, window_x + 15, window_y + title_h + 15, count_text, CDE_TEXT_COLOR);
 
-    int list_y      = window_y + title_h + 55;
-    int list_h      = window_h - title_h - 110;
+    int list_y      = window_y + title_h + 50;
+    int list_h      = window_h - title_h - 115;
     int item_height = 80;
 
     draw_rect(ctx, window_x + 15, list_y, window_w - 30, list_h, 0xFFFFFF);
     draw_3d_border(ctx, window_x + 15, list_y, window_w - 30, list_h, 1);
 
     ctx->items_per_page = (list_h - 6) / item_height;
-    int visible_start   = ctx->scroll_offset;
-    int visible_end     = visible_start + ctx->items_per_page;
+    bool need_scrollbar = ctx->total_items > ctx->items_per_page;
+
+    int visible_start = ctx->scroll_offset;
+    int visible_end   = visible_start + ctx->items_per_page;
     if (visible_end > ctx->total_items)
         visible_end = ctx->total_items;
 
     for (int i = visible_start; i < visible_end; i++) {
-        int item_y    = list_y + 3 + (i - visible_start) * item_height;
-        int item_x    = window_x + 18;
-        int item_w    = window_w - 36;
-        int content_x = item_x + 32; /* shifted right to make room for checkbox */
+        int    item_y = list_y + 3 + (i - visible_start) * item_height;
+        int    item_x = window_x + 18;
+        int    item_w = window_w - 36 - (need_scrollbar ? 22 : 0);
+        bool   sel    = (i == ctx->selected_item);
+        Uint32 tc     = sel ? CDE_SELECTED_TEXT : CDE_TEXT_COLOR;
+        Uint32 dc     = sel ? CDE_SELECTED_TEXT : CDE_INACTIVE_TEXT;
 
-        if (i == ctx->selected_item) {
+        if (sel)
             draw_rect(ctx, item_x, item_y, item_w, item_height - 2, CDE_SELECTED_BG);
-        }
 
-        Uint32 text_color = (i == ctx->selected_item) ? CDE_SELECTED_TEXT : CDE_TEXT_COLOR;
+        /* Icon box containing the checkbox graphic */
+        int icon_x = item_x + 10;
+        int icon_y = item_y + (item_height - 48) / 2;
+        draw_rect(ctx, icon_x, icon_y, 48, 48, sel ? CDE_BORDER_LIGHT : CDE_BUTTON_COLOR);
+        draw_3d_border(ctx, icon_x, icon_y, 48, 48, 1);
 
-        /* Checkbox — 16x16, vertically centered in the 80px item */
-        draw_checkbox(ctx, item_x + 8, item_y + 32, ctx->updates[i].selected, text_color);
+        /* Checkbox (22×22) centred inside the 48×48 box */
+        int    cbx      = icon_x + 13;
+        int    cby      = icon_y + 13;
+        Uint32 cb_color = sel ? CDE_SELECTED_BG : CDE_BORDER_DARK;
+        draw_rect(ctx, cbx, cby, 22, 2, cb_color);
+        draw_rect(ctx, cbx, cby + 20, 22, 2, cb_color);
+        draw_rect(ctx, cbx, cby, 2, 22, cb_color);
+        draw_rect(ctx, cbx + 20, cby, 2, 22, cb_color);
+        if (ctx->updates[i].selected)
+            draw_rect(ctx, cbx + 4, cby + 4, 14, 14, cb_color);
 
-        draw_text_bold(ctx, content_x, item_y + 6, ctx->updates[i].name, text_color);
+        /* Text to the right of the icon box */
+        int text_x = icon_x + 48 + 10;
+        draw_text_bold(ctx, text_x, item_y + 8, ctx->updates[i].name, tc);
 
         char version_text[64];
         snprintf(version_text, sizeof(version_text), "Version: %s", ctx->updates[i].version);
-        draw_text(ctx, content_x, item_y + 30, version_text, text_color);
+        draw_text(ctx, text_x, item_y + 32, version_text, tc);
 
-        /* "New Install" / "Update" label right after the version text */
         const char *type_label  = ctx->updates[i].is_new_install ? "  New Install" : "  Update";
-        Uint32      label_color = (i == ctx->selected_item)          ? CDE_SELECTED_TEXT
-                                : ctx->updates[i].is_new_install     ? CDE_SUCCESS_COLOR
-                                :                                       CDE_INACTIVE_TEXT;
-        int label_x = content_x + get_text_width(version_text);
-        draw_text(ctx, label_x, item_y + 30, type_label, label_color);
+        Uint32      label_color = sel ? CDE_SELECTED_TEXT
+                                      : (ctx->updates[i].is_new_install ? CDE_SUCCESS_COLOR
+                                                                         : CDE_INACTIVE_TEXT);
+        draw_text(ctx, text_x + get_text_width(version_text), item_y + 32,
+                  type_label, label_color);
 
         char desc[60]       = {0};
-        int  max_desc_chars = (item_w - 40) / FONT_WIDTH;
-        if (max_desc_chars > 59)
-            max_desc_chars = 59;
+        int  max_desc_chars = (item_w - 70) / FONT_WIDTH;
+        if (max_desc_chars <= 0) max_desc_chars = 1;
+        if (max_desc_chars > 59) max_desc_chars = 59;
         if (ctx->updates[i].description) {
             strncpy(desc, ctx->updates[i].description, max_desc_chars);
             desc[max_desc_chars] = '\0';
@@ -449,14 +453,13 @@ void draw_update_window(UI_Context *ctx) {
                 desc[max_desc_chars - 1] = '.';
             }
         }
-        draw_text(ctx, content_x, item_y + 54, desc, text_color);
+        draw_text(ctx, text_x, item_y + 56, desc, dc);
 
-        if (i < visible_end - 1) {
+        if (i < visible_end - 1)
             draw_rect(ctx, item_x, item_y + item_height - 2, item_w, 1, CDE_BORDER_DARK);
-        }
     }
 
-    if (ctx->total_items > ctx->items_per_page) {
+    if (need_scrollbar) {
         int scrollbar_x = window_x + window_w - 35;
         int scrollbar_y = list_y + 3;
         int scrollbar_h = list_h - 6;
@@ -465,24 +468,18 @@ void draw_update_window(UI_Context *ctx) {
         draw_3d_border(ctx, scrollbar_x, scrollbar_y, 20, scrollbar_h, 1);
 
         int thumb_h = (scrollbar_h * ctx->items_per_page) / ctx->total_items;
-        if (thumb_h < 30)
-            thumb_h = 30;
+        if (thumb_h < 30) thumb_h = 30;
         int thumb_y = scrollbar_y;
-        if (ctx->total_items > ctx->items_per_page) {
-            thumb_y += ((scrollbar_h - thumb_h) * ctx->scroll_offset) / (ctx->total_items - ctx->items_per_page);
-        }
-
+        if (ctx->total_items > ctx->items_per_page)
+            thumb_y += ((scrollbar_h - thumb_h) * ctx->scroll_offset) /
+                       (ctx->total_items - ctx->items_per_page);
         draw_rect(ctx, scrollbar_x + 3, thumb_y, 14, thumb_h, CDE_PANEL_COLOR);
         draw_3d_border(ctx, scrollbar_x + 3, thumb_y, 14, thumb_h, 0);
     }
 
-    draw_text(
-        ctx,
-        window_x + 15,
-        window_y + window_h - 35,
-        "UP/DOWN: navigate  SPACE: toggle  ENTER: install selected  ESC: exit",
-        CDE_TEXT_COLOR
-    );
+    draw_footer_bar(ctx,
+        "UP/DOWN: Navigate   SPACE: Toggle   ENTER: Install selected   ESC: Exit",
+        CDE_TEXT_COLOR);
 }
 
 static void load_host_config(UI_Context *ctx) {
