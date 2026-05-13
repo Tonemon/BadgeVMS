@@ -1002,7 +1002,6 @@ static void draw_checking_window(UI_Context *ctx) {
     int window_h = SCREEN_HEIGHT - 60;
 
     draw_rect(ctx, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, CDE_BG_COLOR);
-
     draw_rect(ctx, window_x, window_y, window_w, window_h, CDE_PANEL_COLOR);
     draw_3d_border(ctx, window_x, window_y, window_w, window_h, 0);
 
@@ -1010,56 +1009,29 @@ static void draw_checking_window(UI_Context *ctx) {
     draw_rect(ctx, window_x + 3, window_y + 3, window_w - 6, title_h, CDE_TITLE_BG);
     draw_text_bold(ctx, window_x + 15, window_y + 11, "System Update Check", CDE_SELECTED_TEXT);
 
-    int content_y = window_y + window_h / 2 - 60;
-
-    draw_text_centered(ctx, window_x, content_y, window_w, "Checking for updates...", CDE_TEXT_COLOR);
-
     static int    animation_frame = 0;
     static Uint32 last_frame_time = 0;
     Uint32        current_time    = SDL_GetTicks();
-
-    if (current_time - last_frame_time > 500) { // Update every 500ms
+    if (current_time - last_frame_time > 500) {
         animation_frame = (animation_frame + 1) % 4;
         last_frame_time = current_time;
     }
+    static const char * const spinners[] = { "|", "/", "-", "\\" };
 
-    char dots[5] = "    ";
-    for (int i = 0; i < animation_frame; i++) {
-        dots[i] = '.';
-    }
-
-    char progress_text[128];
+    int cy = window_y + window_h / 2 - FONT_HEIGHT;
 
     if (!ctx->connection_failed) {
-        snprintf(progress_text, sizeof(progress_text), "Please wait%s", dots);
-        draw_text_centered(ctx, window_x, content_y + 40, window_w, progress_text, CDE_TEXT_COLOR);
-
-        if (ctx->connected) {
-            const char *status_str = ctx->checking_status[0]
-                ? ctx->checking_status
-                : "Connecting to update server...";
-            draw_text_centered(ctx, window_x, window_y + window_h - 45, window_w, status_str, CDE_TEXT_COLOR);
-        } else {
-            draw_text_centered(
-                ctx,
-                window_x,
-                window_y + window_h - 45,
-                window_w,
-                "Connecting to WiFi...",
-                CDE_TEXT_COLOR
-            );
-        }
+        draw_text_centered(ctx, window_x, cy, window_w, spinners[animation_frame], CDE_TEXT_COLOR);
+        draw_text_bold(ctx, window_x + 15, cy + FONT_HEIGHT + 16, "Checking for updates...", CDE_TEXT_COLOR);
+        const char *status_str = ctx->connected
+            ? (ctx->checking_status[0] ? ctx->checking_status : "Connecting to update server...")
+            : "Connecting to WiFi...";
+        draw_text(ctx, window_x + 15, cy + FONT_HEIGHT * 2 + 28, status_str, CDE_INACTIVE_TEXT);
+        draw_footer_bar(ctx, "Please wait", CDE_INACTIVE_TEXT);
     } else {
-        snprintf(progress_text, sizeof(progress_text), "Press escape to exit");
-        draw_text_centered(ctx, window_x, content_y + 40, window_w, progress_text, CDE_ERROR_COLOR);
-        draw_text_centered(
-            ctx,
-            window_x,
-            window_y + window_h - 45,
-            window_w,
-            "Wifi connection failed",
-            CDE_ERROR_COLOR
-        );
+        draw_text_bold(ctx, window_x + 15, cy, "WiFi connection failed.", CDE_ERROR_COLOR);
+        draw_text(ctx, window_x + 15, cy + FONT_HEIGHT + 16, "Check your network and try again.", CDE_INACTIVE_TEXT);
+        draw_footer_bar(ctx, "ESC: Exit", CDE_TEXT_COLOR);
     }
 }
 
