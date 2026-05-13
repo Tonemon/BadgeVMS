@@ -697,6 +697,22 @@ static const char *settings_labels[SETTINGS_NUM_ENTRIES] = {
     "Force reinstall defaults",
 };
 
+static const char *settings_descs[SETTINGS_NUM_ENTRIES] = {
+    "Connect to the update server and check for new apps",
+    "Serve apps over WiFi to an old badge",
+    "WiFi name and TLS certificate options",
+    "See which version of each app is installed",
+    "Reinstall all apps at their default versions",
+};
+
+static const uint16_t * const OTA_MENU_ICONS[SETTINGS_NUM_ENTRIES] = {
+    ICON_GLOBE, ICON_UPLOAD, ICON_SIGNAL, ICON_LIST, ICON_REFRESH,
+};
+
+static const Uint32 OTA_MENU_COLORS[SETTINGS_NUM_ENTRIES] = {
+    0x0070C0, 0x287030, 0x506070, 0x003898, 0xC04800,
+};
+
 static void draw_settings_menu(UI_Context *ctx) {
     int window_x = 30;
     int window_y = 30;
@@ -711,37 +727,43 @@ static void draw_settings_menu(UI_Context *ctx) {
     draw_rect(ctx, window_x + 3, window_y + 3, window_w - 6, title_h, CDE_TITLE_BG);
     draw_text_bold(ctx, window_x + 15, window_y + 11, "WHY 2025 OTA Updater", CDE_SELECTED_TEXT);
 
-    int list_x = window_x + 20;
-    int list_y = window_y + title_h + 20;
-    int list_w = window_w - 40;
-    int item_h = 50;
+    int list_y      = window_y + title_h + 20;
+    int list_h      = window_h - title_h - 80;
+    int item_height = 65;
+
+    draw_rect(ctx, window_x + 15, list_y, window_w - 30, list_h, 0xFFFFFF);
+    draw_3d_border(ctx, window_x + 15, list_y, window_w - 30, list_h, 1);
 
     for (int i = 0; i < SETTINGS_NUM_ENTRIES; i++) {
-        int  row_y   = list_y + i * item_h;
-        bool selected = (i == ctx->settings_selected);
-        bool inactive = false;
+        int    item_y = list_y + 3 + i * item_height;
+        int    item_x = window_x + 18;
+        int    item_w = window_w - 36;
+        bool   sel    = (i == ctx->settings_selected);
+        Uint32 tc     = sel ? CDE_SELECTED_TEXT : CDE_TEXT_COLOR;
+        Uint32 dc     = sel ? CDE_SELECTED_TEXT : CDE_INACTIVE_TEXT;
 
-        if (selected && !inactive)
-            draw_rect(ctx, list_x, row_y, list_w, item_h - 4, CDE_SELECTED_BG);
+        if (sel)
+            draw_rect(ctx, item_x, item_y, item_w, item_height - 2, CDE_SELECTED_BG);
 
-        Uint32 text_color = inactive   ? CDE_INACTIVE_TEXT
-                          : selected   ? CDE_SELECTED_TEXT
-                          :              CDE_TEXT_COLOR;
-        draw_text(ctx, list_x + 10, row_y + 16, settings_labels[i], text_color);
+        int icon_x = item_x + 10;
+        int icon_y = item_y + (item_height - 48) / 2;
+        draw_rect(ctx, icon_x, icon_y, 48, 48, sel ? CDE_BORDER_LIGHT : CDE_BUTTON_COLOR);
+        draw_3d_border(ctx, icon_x, icon_y, 48, 48, 1);
+        draw_pixel_icon(ctx, icon_x, icon_y, OTA_MENU_ICONS[i], OTA_MENU_COLORS[i]);
+
+        int text_x = icon_x + 48 + 15;
+        draw_text_bold(ctx, text_x, item_y + 12, settings_labels[i], tc);
+        draw_text(ctx, text_x, item_y + 40, settings_descs[i], dc);
+
+        if (i < SETTINGS_NUM_ENTRIES - 1)
+            draw_rect(ctx, item_x, item_y + item_height - 2, item_w, 1, CDE_BORDER_DARK);
     }
 
-    if (ctx->settings_status[0]) {
-        draw_text_centered(
-            ctx, window_x, window_y + window_h - 80, window_w,
-            ctx->settings_status, CDE_INACTIVE_TEXT
-        );
-    }
+    if (ctx->settings_status[0])
+        draw_text_centered(ctx, window_x, list_y + list_h + 8, window_w,
+                           ctx->settings_status, CDE_INACTIVE_TEXT);
 
-    draw_text_centered(
-        ctx, window_x, window_y + window_h - 45, window_w,
-        "UP/DOWN: Navigate   ENTER/SPACE: Select   ESC: Exit",
-        CDE_TEXT_COLOR
-    );
+    draw_footer_bar(ctx, "UP/DOWN: Navigate   ENTER/SPACE: Select   ESC: Exit", CDE_TEXT_COLOR);
 }
 
 void handle_keyboard(UI_Context *ctx, SDL_Scancode key_code) {
