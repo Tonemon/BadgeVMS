@@ -483,8 +483,8 @@ void IRAM_ATTR NOINLINE_ATTR *why_sbrk(intptr_t increment) {
         }
         critical_exit();
     } else {
-        // increment is negative
-        int32_t  decrement_amount = task_info->thread->size + increment;
+        // increment is negative; free exactly |increment| bytes, not (size - |increment|)
+        int32_t  decrement_amount = (int32_t)(-increment);
         int32_t  to_decrement     = decrement_amount;
         uint32_t mmu_id           = why_mmu_hal_get_id_from_target(MMU_TARGET_PSRAM0);
 

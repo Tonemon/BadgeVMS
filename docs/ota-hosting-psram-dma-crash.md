@@ -13,17 +13,17 @@ instruction of `ap_sta_joined` has been overwritten with `0x0000BAD0`, a
 `C.FSD` (compressed double-precision float store) instruction that is illegal on
 ESP32-P4 because it does not implement the RISC-V `D` extension.
 
-**Current hypothesis:** The WiFi driver's AHB GDMA RX path — used for every received
-802.11 frame (beacons, probe responses, DHCP packets) — writes frame data or DMA
-metadata to the wrong PSRAM address. The victim address `0x4a095ff8` sits inside the
-loaded `why2025_ota` app code, and the WiFi DMA buffers are allocated from the same
-PSRAM heap region. A descriptor with a wrong buffer pointer or overflowed length field
-causes the DMA engine to land a write at `0x4a095ff8`, overwriting the first instruction
-of `ap_sta_joined` with `0x0000BAD0`.
+**Current hypothesis:** A bug in `why_sbrk`'s negative-increment path causes dlmalloc's
+heap-trim operation (`sbrk(-N)`) to free nearly all of the app's PSRAM pages instead
+of just the trailing N bytes. The freed physical pages — which still contain live
+app code and heap data — are returned to the buddy page allocator and can be
+reallocated and overwritten. When the physical page that backs `ap_sta_joined`
+(`0x4a095ff8`) is re-mapped to a new physical page containing different content,
+the function's first instruction becomes `0x0000BAD0`.
 
-**Eliminated:** hardware ECC (`CONFIG_MBEDTLS_HARDWARE_ECC=n`, no change), hardware
-MPI (`CONFIG_MBEDTLS_HARDWARE_MPI`, implicitly — plain-HTTP test with TLS fully
-disabled produced an identical crash, see Step 2 results).
+**Eliminated:** hardware ECC (no change), hardware MPI (plain-HTTP test with no
+mbedTLS produced identical crash), mbedTLS entirely (TLS off = crash still occurs),
+WiFi AMPDU RX (disabled — crash still occurs with no client connecting).
 
 A secondary manifestation is a WDT reset (`rst:0x7`) with no backtrace, which occurs
 when the same DMA write corrupts the heap free-list instead of code, causing dlmalloc
@@ -104,24 +104,35 @@ instruction raises an Illegal Instruction exception. The legitimate first instru
 completely different; the byte pattern `D0 BA` has no plausible origin in hand-compiled
 RISC-V.
 
-### WiFi driver AHB GDMA and PSRAM
+### `SPIRAM_USE_MEMMAP` and WiFi buffer placement
 
-The sdkconfig has:
+`CONFIG_SPIRAM_USE_MEMMAP=y` means standard `malloc()` (and therefore WiFi/lwIP dynamic
+RX buffers) uses internal SRAM, not PSRAM. PSRAM is managed exclusively by BadgeVMS's
+buddy page allocator. WiFi DMA buffers are therefore in SRAM; they cannot overlap with
+the PSRAM region where app code lives. This rules out WiFi DMA as the direct writer to
+`0x4a095ff8`.
 
+### `why_sbrk` negative-increment bug
+
+`badgevms/memory.c:why_sbrk(increment)` with a negative `increment` (heap trim) had:
+
+```c
+// BUG — decrement_amount = new remaining size, not the amount to free:
+int32_t decrement_amount = task_info->thread->size + increment;
 ```
-CONFIG_MBEDTLS_HARDWARE_ECC=n  ← eliminated (Step 1)
-CONFIG_MBEDTLS_HARDWARE_MPI=y  ← irrelevant; crash occurs with no mbedTLS at all (Step 2)
-CONFIG_SOC_AHB_GDMA_SUPPORT_PSRAM=y
-CONFIG_SPIRAM_SPEED=200   # 200 MHz HEX-mode PSRAM
-CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=32  ← default; buffers allocated from PSRAM heap
+
+For `sbrk(-64KB)` on a large heap this freed N-1 pages instead of 1, returning
+live app code and heap pages to the buddy allocator. A subsequent allocation by any
+consumer (including dlmalloc's own next `sbrk(+N)`) would remap those physical pages
+with different content, corrupting `ap_sta_joined`. Fixed to:
+
+```c
+int32_t decrement_amount = (int32_t)(-increment);
 ```
 
-The ESP32-P4 WiFi driver uses AHB GDMA channels for all received 802.11 frames. With
-`CONFIG_SPIRAM=y`, the WiFi RX frame buffers are allocated from the PSRAM heap —
-the same region where the app loader places `why2025_ota.elf`. If a DMA descriptor
-has a misconfigured buffer pointer or overflowed length, a received frame write can
-land at `0x4a095ff8` (inside `ap_sta_joined`), overwriting its first instruction with
-bytes from the received frame payload.
+Whether dlmalloc's 2MB trim threshold is reached during normal OTA server operation
+is uncertain. If the crash persists after `MORECORE_CANNOT_TRIM=1` prevents all trim
+calls, the corruption has a different source and the monitor output is needed.
 
 ### Why heap integrity checks did not catch this
 
@@ -170,14 +181,14 @@ misplace its write on that particular run.
 
 Disabling `CONFIG_MBEDTLS_HARDWARE_ECC=n` produced an identical crash. Then disabling
 TLS entirely (no cert generation, no HTTPS thread, no mbedTLS calls at all) also produced
-an identical crash. The register dump is byte-for-byte the same across all three
-configurations. mbedTLS is not involved at any level.
+an identical crash. The register dump is byte-for-byte the same. mbedTLS is not involved
+at any level.
 
-The only DMA subsystem still active in the plain-HTTP + WiFi-AP configuration is the
-**WiFi driver's AHB GDMA RX path**, which the ESP32-P4 WiFi driver uses for all received
-802.11 frames. `T1 = 0x4ff10134` (`gdma_ahb_hal_reset`) appearing in the crash register
-dump is consistent with the WiFi driver having recently performed a DMA channel reset
-as part of normal frame processing.
+With TLS off, no client connecting, AMPDU RX disabled, and all hardware accelerators
+disabled, the crash still occurs after ~1 minute. This rules out all WiFi DMA paths as
+the direct cause. The `T1 = 0x4ff10134` (`gdma_ahb_hal_reset`) in the crash dump reflects
+WiFi beacon DMA that ran before the exception — it is a pre-crash register state, not
+evidence that DMA caused the corruption.
 
 ### Secondary WDT manifestation
 
@@ -220,39 +231,55 @@ Applied: `# CONFIG_ESP_WIFI_AMPDU_RX_ENABLED is not set`. With TLS enabled, cras
 
 ### Step 4b — Full test matrix
 
-| ECC | MPI | AMPDU RX | TLS | Result |
-|-----|-----|----------|-----|--------|
-| on  | on  | on  | on  | crash |
-| off | on  | on  | on  | crash — ECC eliminated |
-| off | on  | on  | off | crash ~23 s (DIAG_CB A+B clean) |
-| off | on  | off | on  | crash — AMPDU RX not the sole cause |
-| off | **off** | off | on  | **pending** |
-| off | on  | off | off | **pending** — would confirm AMPDU fixed WiFi-only path |
+| ECC | MPI | AMPDU RX | TLS | Client | Result |
+|-----|-----|----------|-----|--------|--------|
+| on  | on  | on  | on  | yes | crash |
+| off | on  | on  | on  | yes | crash — ECC eliminated |
+| off | on  | on  | off | yes | crash ~23 s (DIAG_CB A+B clean) |
+| off | on  | off | on  | no  | crash on launch |
+| off | off | off | off | no  | crash ~1 min — ALL hardware disabled, no client |
 
-Hardware MPI was never isolated: we went from ECC-off to TLS-off, skipping MPI-off with TLS-on. MPI is active in every TLS-on run. `SPIRAM_USE_MEMMAP=y` confirms the standard heap is internal SRAM only — WiFi buffers do not come from PSRAM.
+The last row proves the corruption source is not any hardware accelerator or WiFi AMPDU. It is internal to the BadgeVMS PSRAM management (the `why_sbrk` trim bug, or possibly an as-yet-unknown source if dlmalloc never triggers trim in this workload).
 
-### Step 5 — Disable hardware MPI (applied)
+### Step 5 — Disable hardware MPI ✅ Crash persists (with TLS off)
 
-```
-# CONFIG_MBEDTLS_HARDWARE_MPI is not set
-```
+Applied: `# CONFIG_MBEDTLS_HARDWARE_MPI is not set`. Tested with TLS disabled and no client connecting — crash still occurs after ~1 minute. mbedTLS hardware peripherals fully eliminated. The only remaining write source was the WiFi stack itself, but it was already crash-testing without any client connection.
 
-With hardware MPI disabled, `tls_generate_selfsigned` falls back to software big-number arithmetic. No MPI DMA transfers happen. If the crash disappears with TLS on, hardware MPI DMA is confirmed as the TLS-path cause. If it only slows the crash (from immediate to ~23 s), there is a second WiFi-path bug separate from MPI.
+### Step 6 — Discovered `why_sbrk` negative-increment bug (root cause candidate)
 
-### Step 6 — Heap integrity alongside code corruption (supplementary)
-
-Add temporarily to `wifi.c` before `s_ap_sta_joined_cb` is called:
+In `badgevms/memory.c`, `why_sbrk(increment)` for negative `increment` computes:
 
 ```c
-// wifi.c — inside IP_EVENT_AP_STAIPASSIGNED handler
-#include "esp_heap_caps.h"
-if (!heap_caps_check_integrity_all(true))
-    ESP_LOGE(TAG, "Heap corruption detected before ap_sta_joined_cb call");
-if (s_ap_sta_joined_cb)
-    s_ap_sta_joined_cb(ev->mac, ip_str);
+// BEFORE FIX (buggy):
+int32_t decrement_amount = task_info->thread->size + increment;
+//  = thread->size - |increment|  ← this is the NEW remaining size, not the amount to free!
 ```
 
-If heap check also fails, the DMA write hit both code and heap metadata. If it passes, only executable PSRAM was hit.
+For example, `sbrk(-64KB)` on an 8-page (512KB) heap:
+- `decrement_amount = 512KB - 64KB = 448KB` (7 pages)
+- Loop frees 7 pages starting from the newest (highest vaddrs)
+- `thread->size` and `thread->end` end up correctly at 64KB
+- But 7 physical PSRAM pages containing live code and heap data have been returned to the page pool
+
+The correct fix (applied in this commit):
+```c
+int32_t decrement_amount = (int32_t)(-increment);  // amount to free = |increment|
+```
+
+`MORECORE_CANNOT_TRIM=1` added to the dlmalloc compile flags in `badgevms/CMakeLists.txt` to prevent dlmalloc from calling `sbrk(-N)` at all, so the buggy path is unreachable until confidence in the fix is established.
+
+**Note:** dlmalloc's default trim threshold is 2MB. Whether the OTA app heap ever grows to 2MB (triggering the bug) is uncertain and depends on TLS cert generation or other large allocations. The trim might not fire in the plain-HTTP/no-client test, suggesting an additional cause is possible.
+
+### Step 7 — Continuous corruption monitor (applied)
+
+Added `psram_corruption_monitor` thread to `ota_server.c`, started immediately after `wifi_start_ap`. It polls `ap_sta_joined[0]` every 50ms and prints the exact millisecond of corruption with before/after values:
+
+```
+[OTA monitor] start: ap_sta_joined=0x4a095fa0 paddr=0x02095fa0 word=0xcc221101
+[OTA monitor] CORRUPTION at t=58350ms! 0xcc221101 -> 0x0000bad0
+```
+
+This tells us whether the corruption is periodic, event-triggered, or one-time.
 
 ---
 
@@ -361,7 +388,10 @@ the `ap_sta_joined` callback exactly as the old badge would.
 
 - [x] Previous crash (dlmalloc SAFE UNLINK in `tls_server_ctx_create`) — **fixed**
 - [ ] Current crash (PSRAM code corruption at `0x4a095ff8`) — **investigating**
-  - [x] `CONFIG_MBEDTLS_HARDWARE_ECC=n` — no change, eliminated
-  - [x] Plain HTTP (no TLS, no mbedTLS) — crash still occurs, mbedTLS fully eliminated
-  - [x] DIAG_CB checkpoints A and B both clean — wifi_start_ap is innocent; corruption is from ongoing frame-RX DMA
-  - [ ] Pending: rebuild with `CONFIG_ESP_WIFI_AMPDU_RX_ENABLED=n` (Step 4) — applied to sdkconfig
+  - [x] All mbedTLS hardware accelerators disabled — no change, fully eliminated
+  - [x] WiFi AMPDU RX disabled — no change, eliminated
+  - [x] TLS disabled, no client connecting — crash still occurs ~1 min; rules out WiFi DMA
+  - [x] `why_sbrk` negative-increment bug found and fixed (`badgevms/memory.c`)
+  - [x] `MORECORE_CANNOT_TRIM=1` added to prevent dlmalloc from calling `sbrk(-N)`
+  - [x] Continuous corruption monitor added (`psram_corruption_monitor` thread in `ota_server.c`)
+  - [ ] Pending: rebuild and flash; observe monitor output to determine corruption timing and source

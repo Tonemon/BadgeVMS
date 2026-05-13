@@ -4,6 +4,7 @@
 
 #include <arpa/inet.h>
 #include <badgevms/application.h>
+#include <badgevms/misc_funcs.h>
 #include <badgevms/ota.h>
 #include <badgevms/process.h>
 #include <badgevms/tls_server.h>
@@ -410,6 +411,29 @@ static void handle_connection(conn_ctx_t *c, const char *our_ip,
     }
 }
 
+/* ── Corruption monitor (polls ap_sta_joined[0] every 50 ms) ─── */
+
+static void psram_corruption_monitor(void *arg) {
+    (void)arg;
+    uint32_t paddr = vaddr_to_paddr((uint32_t)(uintptr_t)ap_sta_joined);
+    uint32_t expected;
+    memcpy(&expected, (void *)ap_sta_joined, 4);
+    printf("[OTA monitor] start: ap_sta_joined=%p paddr=0x%08lx word=0x%08lx\n",
+           (void *)ap_sta_joined, (unsigned long)paddr, (unsigned long)expected);
+    unsigned int ticks = 0;
+    for (;;) {
+        usleep(50000); /* 50 ms */
+        ticks++;
+        uint32_t cur;
+        memcpy(&cur, (void *)ap_sta_joined, 4);
+        if (cur != expected) {
+            printf("[OTA monitor] CORRUPTION at t=%ums! 0x%08lx -> 0x%08lx\n",
+                   ticks * 50, (unsigned long)expected, (unsigned long)cur);
+            expected = cur;
+        }
+    }
+}
+
 /* ── HTTP server loop (runs in background thread) ─────────────── */
 
 void ota_host_server_thread(void *arg) {
@@ -426,6 +450,7 @@ void ota_host_server_thread(void *arg) {
     wifi_set_ap_sta_joined_cb(ap_sta_joined);
     wifi_start_ap("WHY2025-open", "");
     DIAG_CB(); /* after wifi_start_ap */
+    thread_create(psram_corruption_monitor, NULL, 4096);
     strncpy(s->ip, "192.168.4.1", sizeof(s->ip) - 1);
     s->ip[sizeof(s->ip) - 1] = '\0';
 
