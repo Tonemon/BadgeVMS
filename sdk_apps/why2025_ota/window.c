@@ -597,36 +597,40 @@ static void draw_version_list(UI_Context *ctx) {
     draw_rect(ctx, window_x + 3, window_y + 3, window_w - 6, title_h, CDE_TITLE_BG);
     draw_text_bold(ctx, window_x + 15, window_y + 11, "Installed Versions", CDE_SELECTED_TEXT);
 
-    int list_x   = window_x + 20;
     int list_y   = window_y + title_h + 15;
-    int list_h   = window_h - title_h - 65;
+    int list_h   = window_h - title_h - 75;
     int item_h   = 36;
-    int per_page = VERSION_LIST_PER_PAGE;
+    int per_page = (list_h - 6) / item_h;
+
+    draw_rect(ctx, window_x + 15, list_y, window_w - 30, list_h, 0xFFFFFF);
+    draw_3d_border(ctx, window_x + 15, list_y, window_w - 30, list_h, 1);
 
     if (ctx->num_version_entries == 0) {
-        draw_text_centered(ctx, window_x, list_y + list_h / 2, window_w,
-            "No applications installed", CDE_INACTIVE_TEXT);
+        draw_text_centered(ctx, window_x, list_y + list_h / 2 - FONT_HEIGHT / 2,
+                           window_w, "No applications installed", CDE_INACTIVE_TEXT);
     }
+
     for (int i = 0; i < per_page; i++) {
         int idx = ctx->version_scroll + i;
-        if (idx >= ctx->num_version_entries) break;
+        if (idx >= ctx->num_version_entries)
+            break;
 
-        int row_y = list_y + i * item_h;
-        draw_text(ctx, list_x, row_y + 4, ctx->version_entries[idx].name, CDE_TEXT_COLOR);
+        int row_y = list_y + 3 + i * item_h;
+        int row_x = window_x + 22;
+        int row_w = window_w - 44;
+
+        draw_text_bold(ctx, row_x, row_y + 6, ctx->version_entries[idx].name, CDE_TEXT_COLOR);
 
         char ver_label[80];
         snprintf(ver_label, sizeof(ver_label), "v%s", ctx->version_entries[idx].version);
         int label_w = get_text_width(ver_label);
-        draw_text(ctx, window_x + window_w - 20 - label_w, row_y + 4, ver_label, CDE_INACTIVE_TEXT);
+        draw_text(ctx, row_x + row_w - label_w, row_y + 6, ver_label, CDE_INACTIVE_TEXT);
 
-        draw_rect(ctx, list_x, row_y + item_h - 2, window_w - 40, 1, CDE_BORDER_DARK);
+        if (i < per_page - 1 && idx < ctx->num_version_entries - 1)
+            draw_rect(ctx, row_x, row_y + item_h - 2, row_w, 1, CDE_BORDER_DARK);
     }
 
-    draw_text_centered(
-        ctx, window_x, window_y + window_h - 45, window_w,
-        "UP/DOWN: Scroll   ESC: Back",
-        CDE_TEXT_COLOR
-    );
+    draw_footer_bar(ctx, "UP/DOWN: Scroll   ESC: Back", CDE_TEXT_COLOR);
 }
 
 #define HOST_SETTINGS_NUM_ENTRIES 2
