@@ -300,7 +300,6 @@ void draw_progress_window(UI_Context *ctx) {
     int window_h = SCREEN_HEIGHT - 60;
 
     draw_rect(ctx, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, CDE_BG_COLOR);
-
     draw_rect(ctx, window_x, window_y, window_w, window_h, CDE_PANEL_COLOR);
     draw_3d_border(ctx, window_x, window_y, window_w, window_h, 0);
 
@@ -308,55 +307,48 @@ void draw_progress_window(UI_Context *ctx) {
     draw_rect(ctx, window_x + 3, window_y + 3, window_w - 6, title_h, CDE_TITLE_BG);
     draw_text_bold(ctx, window_x + 15, window_y + 11, "System Update Progress", CDE_SELECTED_TEXT);
 
-    int content_y = window_y + window_h / 2 - 100;
+    int content_y = window_y + window_h / 2 - 80;
 
-    draw_text_centered(ctx, window_x, content_y, window_w, "Updating...", CDE_TEXT_COLOR);
+    /* "Installing <name>..." */
+    char installing_text[256] = "Installing...";
+    if (ctx->current_update_index < ctx->total_items)
+        snprintf(installing_text, sizeof(installing_text),
+                 "Installing %s...", ctx->updates[ctx->current_update_index].name);
+    draw_text_bold(ctx, window_x + 15, content_y, installing_text, CDE_TEXT_COLOR);
 
+    /* Progress bar */
     int bar_width  = window_w - 100;
     int bar_height = 40;
     int bar_x      = window_x + 50;
-    int bar_y      = content_y + 60;
+    int bar_y      = content_y + FONT_HEIGHT + 20;
 
     draw_rect(ctx, bar_x, bar_y, bar_width, bar_height, CDE_PROGRESS_BG);
     draw_3d_border(ctx, bar_x, bar_y, bar_width, bar_height, 1);
 
     float progress = ctx->items_to_install > 0
-                         ? (float)ctx->updates_completed / (float)ctx->items_to_install
-                         : 0.0f;
-    int   fill_width = (int)((bar_width - 6) * progress);
-
+        ? (float)ctx->updates_completed / (float)ctx->items_to_install : 0.0f;
+    int fill_width = (int)((bar_width - 6) * progress);
     if (fill_width > 0) {
         draw_rect(ctx, bar_x + 3, bar_y + 3, fill_width, bar_height - 6, CDE_PROGRESS_FG);
         draw_rect(ctx, bar_x + 3, bar_y + 3, fill_width, 2, CDE_BORDER_LIGHT);
     }
 
-    char progress_text[128];
+    /* N of M overlay on bar */
+    char nm_text[32];
+    snprintf(nm_text, sizeof(nm_text), "%d of %d", ctx->updates_completed, ctx->items_to_install);
+    draw_text_centered(ctx, bar_x, bar_y + (bar_height - FONT_HEIGHT) / 2, bar_width,
+                       nm_text, CDE_BORDER_LIGHT);
+
+    /* "X remaining" */
     int  remaining = ctx->items_to_install - ctx->updates_completed;
-    if (remaining == 1) {
-        snprintf(progress_text, sizeof(progress_text), "1 application remaining");
-    } else {
-        snprintf(progress_text, sizeof(progress_text), "%d applications remaining", remaining);
-    }
-    draw_text_centered(ctx, window_x, bar_y + bar_height + 30, window_w, progress_text, CDE_TEXT_COLOR);
+    char rem_text[64];
+    if (remaining == 1)
+        snprintf(rem_text, sizeof(rem_text), "1 application remaining");
+    else
+        snprintf(rem_text, sizeof(rem_text), "%d applications remaining", remaining);
+    draw_text_centered(ctx, window_x, bar_y + bar_height + 20, window_w, rem_text, CDE_INACTIVE_TEXT);
 
-    if (ctx->current_update_index < ctx->total_items) {
-        char current_text[256];
-        snprintf(
-            current_text,
-            sizeof(current_text),
-            "Currently updating: %s",
-            ctx->updates[ctx->current_update_index].name
-        );
-        draw_text_centered(ctx, window_x, bar_y + bar_height + 60, window_w, current_text, CDE_TEXT_COLOR);
-    }
-
-    draw_text(
-        ctx,
-        window_x + 15,
-        window_y + window_h - 35,
-        "Please wait while updates are being installed...",
-        CDE_TEXT_COLOR
-    );
+    draw_footer_bar(ctx, "Please wait while updates are being installed...", CDE_INACTIVE_TEXT);
 }
 
 void draw_update_window(UI_Context *ctx) {
