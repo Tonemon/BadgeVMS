@@ -1030,67 +1030,74 @@ static void draw_hosting_window(UI_Context *ctx) {
     draw_rect(ctx, window_x + 3, window_y + 3, window_w - 6, title_h, CDE_TITLE_BG);
     draw_text_bold(ctx, window_x + 15, window_y + 11, "OTA Host Server", CDE_SELECTED_TEXT);
 
-    int y = window_y + title_h + 30;
-
     bool http_running = atomic_load(&ctx->host_state.running);
     bool stop_req     = atomic_load(&ctx->host_state.stop_requested);
     bool dns_running  = atomic_load(&ctx->dns_state.running);
     int  req_count    = atomic_load(&ctx->host_state.requests_served);
     int  dns_count    = atomic_load(&ctx->dns_state.queries_answered);
 
+    int lx = window_x + 20;
+    int y  = window_y + title_h + 25;
+
     if (stop_req && !http_running) {
-        draw_text_centered(ctx, window_x, y, window_w, "Servers stopped.", CDE_INACTIVE_TEXT);
+        draw_text_bold(ctx, lx, y, "Servers stopped.", CDE_INACTIVE_TEXT);
     } else if (!http_running) {
-        draw_text_centered(ctx, window_x, y, window_w, "Starting servers...", CDE_TEXT_COLOR);
+        draw_text_bold(ctx, lx, y, "Starting servers...", CDE_TEXT_COLOR);
     } else {
-        char line[128];
+        char addr[128];
 
-        snprintf(line, sizeof(line), "HTTP  running at http://%s", ctx->host_state.ip);
-        draw_text_centered(ctx, window_x, y, window_w, line, CDE_SUCCESS_COLOR);
-        y += 28;
+        /* HTTP row */
+        Uint32 http_color = CDE_SUCCESS_COLOR;
+        draw_text_bold(ctx, lx, y, "HTTP ", http_color);
+        snprintf(addr, sizeof(addr), "http://%s", ctx->host_state.ip);
+        draw_text(ctx, lx + get_text_width("HTTP "), y, addr, CDE_TEXT_COLOR);
+        y += FONT_HEIGHT + 8;
 
+        /* HTTPS row */
         if (ctx->host_self_signed_cert) {
+            Uint32 https_color = ctx->tls_thread_launched ? CDE_SUCCESS_COLOR : CDE_TEXT_COLOR;
+            draw_text_bold(ctx, lx, y, "HTTPS", https_color);
             if (ctx->tls_thread_launched) {
-                snprintf(line, sizeof(line), "HTTPS running at https://%s", ctx->host_state.ip);
-                draw_text_centered(ctx, window_x, y, window_w, line, CDE_SUCCESS_COLOR);
+                snprintf(addr, sizeof(addr), "https://%s", ctx->host_state.ip);
+                draw_text(ctx, lx + get_text_width("HTTPS"), y, addr, CDE_TEXT_COLOR);
             } else {
-                draw_text_centered(ctx, window_x, y, window_w, "HTTPS starting...", CDE_TEXT_COLOR);
+                draw_text(ctx, lx + get_text_width("HTTPS"), y, " starting...", CDE_INACTIVE_TEXT);
             }
-            y += 28;
+            y += FONT_HEIGHT + 8;
         }
 
-        if (dns_running) {
-            snprintf(line, sizeof(line), "DNS   running at %s:53", ctx->host_state.ip);
-            draw_text_centered(ctx, window_x, y, window_w, line, CDE_SUCCESS_COLOR);
-        } else {
-            draw_text_centered(ctx, window_x, y, window_w, "DNS   starting...", CDE_TEXT_COLOR);
-        }
-        y += 36;
+        /* DNS row */
+        Uint32 dns_color = dns_running ? CDE_SUCCESS_COLOR : CDE_TEXT_COLOR;
+        draw_text_bold(ctx, lx, y, "DNS  ", dns_color);
+        snprintf(addr, sizeof(addr), "%s:53", ctx->host_state.ip);
+        draw_text(ctx, lx + get_text_width("DNS  "), y,
+                  dns_running ? addr : " starting...", CDE_TEXT_COLOR);
+        y += FONT_HEIGHT + 16;
 
-        draw_text_centered(ctx, window_x, y, window_w,
-            "Connect old badge to WiFi: WHY2025-open", CDE_TEXT_COLOR);
-        y += 28;
-        draw_text_centered(ctx, window_x, y, window_w,
-            "No password. DNS is automatic.", CDE_TEXT_COLOR);
-        y += 36;
+        draw_rect(ctx, lx, y, window_w - 40, 1, CDE_BORDER_DARK);
+        y += 12;
 
-        draw_rect(ctx, window_x + 30, y, window_w - 60, 1, CDE_BORDER_DARK);
-        y += 16;
+        snprintf(addr, sizeof(addr), "Connect old badge to WiFi: %s", ctx->host_ssid);
+        draw_text(ctx, lx, y, addr, CDE_INACTIVE_TEXT);
+        y += FONT_HEIGHT + 4;
+        draw_text(ctx, lx, y, "No password — DNS is automatic.", CDE_INACTIVE_TEXT);
+        y += FONT_HEIGHT + 16;
 
-        snprintf(line, sizeof(line), "Requests: %d   DNS queries: %d", req_count, dns_count);
-        draw_text_centered(ctx, window_x, y, window_w, line, CDE_TEXT_COLOR);
-        y += 28;
+        draw_rect(ctx, lx, y, window_w - 40, 1, CDE_BORDER_DARK);
+        y += 12;
+
+        snprintf(addr, sizeof(addr), "Requests: %d   DNS queries: %d", req_count, dns_count);
+        draw_text(ctx, lx, y, addr, CDE_TEXT_COLOR);
+        y += FONT_HEIGHT + 8;
 
         if (atomic_load(&ctx->host_state.has_last_client)) {
-            snprintf(line, sizeof(line), "Last badge: %s @ %s",
-                     ctx->host_state.last_client_mac,
-                     ctx->host_state.last_client_ip);
-            draw_text_centered(ctx, window_x, y, window_w, line, CDE_SUCCESS_COLOR);
+            snprintf(addr, sizeof(addr), "Last badge: %s @ %s",
+                     ctx->host_state.last_client_mac, ctx->host_state.last_client_ip);
+            draw_text(ctx, lx, y, addr, CDE_SUCCESS_COLOR);
         }
     }
 
-    draw_text_centered(ctx, window_x, window_y + window_h - 45, window_w,
-        "ESC: stop server and return", CDE_TEXT_COLOR);
+    draw_footer_bar(ctx, "ESC: Stop server and return", CDE_TEXT_COLOR);
 }
 
 void draw_no_updates_window(UI_Context *ctx) {
