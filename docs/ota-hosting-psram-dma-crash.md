@@ -13,11 +13,17 @@ instruction of `ap_sta_joined` has been overwritten with `0x0000BAD0`, a
 `C.FSD` (compressed double-precision float store) instruction that is illegal on
 ESP32-P4 because it does not implement the RISC-V `D` extension.
 
-**Current hypothesis:** The hardware MPI accelerator (`CONFIG_MBEDTLS_HARDWARE_MPI=y`),
-which remains active even with ECC acceleration disabled, issues a misconfigured GDMA
-transfer during mbedTLS big-number operations (used by the P-256 key generation inside
-`tls_generate_selfsigned`), writing intermediate computation data to the wrong PSRAM
-address — the one occupied by `ap_sta_joined`.
+**Current hypothesis:** The WiFi driver's AHB GDMA RX path — used for every received
+802.11 frame (beacons, probe responses, DHCP packets) — writes frame data or DMA
+metadata to the wrong PSRAM address. The victim address `0x4a095ff8` sits inside the
+loaded `why2025_ota` app code, and the WiFi DMA buffers are allocated from the same
+PSRAM heap region. A descriptor with a wrong buffer pointer or overflowed length field
+causes the DMA engine to land a write at `0x4a095ff8`, overwriting the first instruction
+of `ap_sta_joined` with `0x0000BAD0`.
+
+**Eliminated:** hardware ECC (`CONFIG_MBEDTLS_HARDWARE_ECC=n`, no change), hardware
+MPI (`CONFIG_MBEDTLS_HARDWARE_MPI`, implicitly — plain-HTTP test with TLS fully
+disabled produced an identical crash, see Step 2 results).
 
 A secondary manifestation is a WDT reset (`rst:0x7`) with no backtrace, which occurs
 when the same DMA write corrupts the heap free-list instead of code, causing dlmalloc
@@ -98,26 +104,24 @@ instruction raises an Illegal Instruction exception. The legitimate first instru
 completely different; the byte pattern `D0 BA` has no plausible origin in hand-compiled
 RISC-V.
 
-### Hardware MPI accelerator and PSRAM
+### WiFi driver AHB GDMA and PSRAM
 
 The sdkconfig has:
 
 ```
-CONFIG_MBEDTLS_HARDWARE_ECC=n  ← disabled after Step 1 test, no effect
-CONFIG_MBEDTLS_HARDWARE_MPI=y  ← still active; current primary suspect
+CONFIG_MBEDTLS_HARDWARE_ECC=n  ← eliminated (Step 1)
+CONFIG_MBEDTLS_HARDWARE_MPI=y  ← irrelevant; crash occurs with no mbedTLS at all (Step 2)
 CONFIG_SOC_AHB_GDMA_SUPPORT_PSRAM=y
 CONFIG_SPIRAM_SPEED=200   # 200 MHz HEX-mode PSRAM
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=32  ← default; buffers allocated from PSRAM heap
 ```
 
-`tls_generate_selfsigned` calls `mbedtls_ecp_gen_key` on `MBEDTLS_ECP_DP_SECP256R1`.
-Even with the ECC block disabled, software ECC falls back to `mbedtls_mpi_*` operations
-for the underlying modular arithmetic, and the hardware MPI accelerator services those
-through AHB GDMA transfers.
-
-If the hardware MPI driver computes a DMA destination address incorrectly — even by a
-small offset — it can write 32-byte (256-bit) bignum intermediate values to the wrong
-PSRAM location. `0x4a095ff8` is a plausible victim: `0xBAD0` as two bytes of a 256-bit
-integer is not special, but it happens to land there.
+The ESP32-P4 WiFi driver uses AHB GDMA channels for all received 802.11 frames. With
+`CONFIG_SPIRAM=y`, the WiFi RX frame buffers are allocated from the PSRAM heap —
+the same region where the app loader places `why2025_ota.elf`. If a DMA descriptor
+has a misconfigured buffer pointer or overflowed length, a received frame write can
+land at `0x4a095ff8` (inside `ap_sta_joined`), overwriting its first instruction with
+bytes from the received frame payload.
 
 ### Why heap integrity checks did not catch this
 
@@ -140,36 +144,40 @@ T1 : 0x4ff10134
 The AHB GDMA reset routine was in-flight at crash time, consistent with DMA activity
 from a hardware accelerator (MPI or ECC block).
 
-### Timing: corruption occurs before the first TCP connection
+### Timing: varies, but always before or at DHCP assignment
 
-Every observed crash fires on the **first** `IP_EVENT_AP_STAIPASSIGNED` event — the
-moment the old badge finishes DHCP. Log evidence shows only the pre-accept `"Accepting"`
-print, never `"Accepted"` or `"Assigned fd"`, confirming no TCP connection was ever
-established before the crash. The corrupted word `0x0000bad0` is byte-for-byte identical
-across multiple runs, which means the DMA write is deterministic in content but its
-timing relative to DHCP varies.
+Three plain-HTTP (no TLS) runs recorded so far:
 
-This narrows the corruption window to the HTTP server thread's init sequence:
-```
-wifi_set_ap_sta_joined_cb → wifi_start_ap → socket → bind → listen
-```
-and, when TLS is enabled, the concurrent HTTPS thread:
-```
-tls_generate_selfsigned → tls_server_ctx_create → socket → bind → listen
-```
+**Run A** — laptop connected, multiple `accept()` timeouts printed, laptop made HTTP
+requests, then crash on a second `IP_EVENT_AP_STAIPASSIGNED` (laptop reconnected or
+renewed lease). Callback was called successfully at least once before corruption struck.
 
-No TLS handshake (ECDH) has ever run at crash time. The source must be in the init
-phase — most likely during big-number operations inside `tls_generate_selfsigned`.
+**Run B** — crashed before the laptop connected at all. Only the WiFi AP was running,
+sending beacon frames. No client ever associated. Crash fired on the first
+`IP_EVENT_AP_STAIPASSIGNED` from some background association (possibly the laptop's OS
+doing a passive probe).
 
-### Why hardware ECC elimination changed nothing
+**Run C** — crashed the moment the laptop clicked to join WHY2025-open (during the
+802.11 association/DHCP exchange).
 
-Disabling `CONFIG_MBEDTLS_HARDWARE_ECC=n` left the register dump byte-for-byte identical
-(same MEPC, MTVAL, T1, T0, A5). The ECC accelerator is not the cause.
-`CONFIG_MBEDTLS_HARDWARE_MPI=y` remains active; the MPI accelerator handles the
-finite-field arithmetic underlying both RSA and ECC key generation. `tls_generate_selfsigned`
-calls `mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_SECP256R1)`, which drives multiple MPI
-hardware DMA operations even without the ECC block. The `T1` register pointing into
-`gdma_ahb_hal_reset` at crash time remains consistent with an active DMA transfer.
+All three register dumps are byte-for-byte identical (MEPC, MTVAL, T0, T1, A5). The
+corruption content is deterministic (`0x0000bad0`) but the timing is not. This is
+consistent with a DMA write that triggers on any received WiFi frame — beacons, probe
+responses, association frames, DHCP packets — wherever the WiFi DMA engine happens to
+misplace its write on that particular run.
+
+### Why mbedTLS elimination changed nothing
+
+Disabling `CONFIG_MBEDTLS_HARDWARE_ECC=n` produced an identical crash. Then disabling
+TLS entirely (no cert generation, no HTTPS thread, no mbedTLS calls at all) also produced
+an identical crash. The register dump is byte-for-byte the same across all three
+configurations. mbedTLS is not involved at any level.
+
+The only DMA subsystem still active in the plain-HTTP + WiFi-AP configuration is the
+**WiFi driver's AHB GDMA RX path**, which the ESP32-P4 WiFi driver uses for all received
+802.11 frames. `T1 = 0x4ff10134` (`gdma_ahb_hal_reset`) appearing in the crash register
+dump is consistent with the WiFi driver having recently performed a DMA channel reset
+as part of normal frame processing.
 
 ### Secondary WDT manifestation
 
@@ -186,80 +194,63 @@ System WDT fires.
 
 ### Step 1 — Disable hardware ECC ✅ Eliminated
 
-`CONFIG_MBEDTLS_HARDWARE_ECC=n` was tested. The crash register dump was byte-for-byte
-identical (same MEPC, MTVAL, T1, T0, A5). Hardware ECC is not the cause.
+`CONFIG_MBEDTLS_HARDWARE_ECC=n` was tested. Register dump byte-for-byte identical. Not the cause.
 
-### Step 2 — Test plain HTTP (no TLS)
+### Step 2 — Test plain HTTP (no TLS) ✅ Crash persists — mbedTLS fully eliminated
 
-On the OTA host settings screen, uncheck "Generate self-signed certificate" and start
-hosting. This prevents `ota_host_tls_server_thread` from launching, so
-`tls_generate_selfsigned` never runs and no MPI/ECC hardware ops occur.
+Three runs with TLS disabled (no cert generation, no HTTPS thread, no mbedTLS calls):
 
-- **If the crash disappears:** mbedTLS (hardware MPI or software big-number ops) is the
-  cause — proceed to Step 3.
-- **If the crash persists:** the corruption is unrelated to mbedTLS; the cause is in
-  WiFi AP init or PSRAM setup — hardware watchpoint on `0x4a095ff8` would be the next
-  step.
+- **Run A**: crash on second `IP_EVENT_AP_STAIPASSIGNED` after laptop connected and served HTTP requests
+- **Run B**: crash before laptop connected at all — AP beaconing alone was sufficient
+- **Run C**: crash during laptop 802.11 association/DHCP exchange
 
-### Step 3 — Disable hardware MPI
+All three: identical register dump (MEPC `0x4a095ff8`, MTVAL `0x0000bad0`, T1 `0x4ff10134`). mbedTLS is not involved at any level. The only DMA subsystem still active is the WiFi driver.
 
-If Step 2 confirms mbedTLS is the cause:
+### Step 3 — Read DIAG_CB checkpoint output (pending reflash)
+
+The `[OTA diag]` lines were absent from all crash logs — badge was running a pre-commit
+binary. Reflash with the latest build. With TLS disabled, only checkpoints A and B print:
 
 ```
-CONFIG_MBEDTLS_HARDWARE_MPI=n
+[OTA diag] ap_sta_joined[0]=0x???????? @ ota_host_server_thread:NNN   ← A (before wifi_set_ap_sta_joined_cb)
+[OTA diag] ap_sta_joined[0]=0x???????? @ ota_host_server_thread:NNN   ← B (after wifi_start_ap)
 ```
 
-Rebuild with TLS enabled. If the crash disappears, the hardware MPI DMA is confirmed.
-Software big-number arithmetic is slower but correct; for a single-client OTA server it
-is acceptable.
+If B is already `0x0000bad0`, the WiFi AP init DMA corrupts the code before any frame
+is received. If both A and B are clean, the corruption happens later (during frame RX).
 
-### Step 4 — Read diagnostic prints (code integrity checkpoints)
+### Step 4 — Force WiFi RX buffers out of PSRAM (primary fix candidate)
 
-`DIAG_CB()` prints are already inserted in `ota_server.c` at four checkpoints:
+The WiFi driver allocates RX frame buffers from the heap. With `CONFIG_SPIRAM=y`, that
+heap is PSRAM — the same region where the loaded app code lives. A DMA descriptor with
+a wrong buffer pointer or overflowed length can land a write inside the app's code.
+Forcing static, internal-RAM WiFi buffers removes the overlap entirely:
 
-| Checkpoint | Thread | Location |
-|---|---|---|
-| A | HTTP | before `wifi_set_ap_sta_joined_cb` |
-| B | HTTP | after `wifi_start_ap` |
-| C | HTTPS | before `tls_generate_selfsigned` |
-| D | HTTPS | after `tls_generate_selfsigned` |
-| E | HTTPS | after `tls_server_ctx_create` |
-
-Each print logs `ap_sta_joined[0]` (first 4 bytes of the function's code). The first
-run where the value changes from the expected prologue (`addi sp,sp,-N` or `sw ra,N(sp)`)
-to `0x0000bad0` (or any other unexpected value) identifies which operation triggered the
-DMA write.
-
-Expected output (no corruption):
 ```
-[OTA diag] ap_sta_joined[0]=0x1141xxxx @ ota_host_server_thread:NNN    ← A
-[OTA diag] ap_sta_joined[0]=0x1141xxxx @ ota_host_server_thread:NNN    ← B
-[OTA diag] ap_sta_joined[0]=0x1141xxxx @ ota_host_tls_server_thread:NNN ← C
-[OTA diag] ap_sta_joined[0]=0x1141xxxx @ ota_host_tls_server_thread:NNN ← D
-[OTA diag] ap_sta_joined[0]=0x1141xxxx @ ota_host_tls_server_thread:NNN ← E
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER=y
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_SIZE=1600
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=10
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=0
 ```
 
-If checkpoint D prints `0x0000bad0` (after `tls_generate_selfsigned`) but C was clean,
-the MPI key-gen DMA is the culprit. If B is already corrupt, it's WiFi AP init.
+Rebuild and retest (TLS on or off). If the crash disappears, WiFi DMA buffer placement
+is confirmed as the root cause and this config is the fix.
 
 ### Step 5 — Heap integrity alongside code corruption (supplementary)
 
-To determine whether heap corruption accompanies the code corruption, add temporarily
-to `wifi.c` before `s_ap_sta_joined_cb` is called:
+Add temporarily to `wifi.c` before `s_ap_sta_joined_cb` is called:
 
 ```c
-// wifi.c — inside IP_EVENT_AP_STAIPASSIGNED handler, before the callback
+// wifi.c — inside IP_EVENT_AP_STAIPASSIGNED handler
 #include "esp_heap_caps.h"
-if (!heap_caps_check_integrity_all(true)) {
+if (!heap_caps_check_integrity_all(true))
     ESP_LOGE(TAG, "Heap corruption detected before ap_sta_joined_cb call");
-}
 if (s_ap_sta_joined_cb)
     s_ap_sta_joined_cb(ev->mac, ip_str);
 ```
 
-If the heap check also fails, the same DMA write hit both code and heap. If it passes,
-only the code region is affected (the DMA destination happened to fall on executable
-PSRAM outside the heap's bookkeeping structures).
+If the heap check also fails, the DMA write hit both code and heap metadata. If it
+passes, the write landed in executable PSRAM outside the heap's bookkeeping structures.
 
 ---
 
@@ -368,7 +359,7 @@ the `ap_sta_joined` callback exactly as the old badge would.
 
 - [x] Previous crash (dlmalloc SAFE UNLINK in `tls_server_ctx_create`) — **fixed**
 - [ ] Current crash (PSRAM code corruption at `0x4a095ff8`) — **investigating**
-  - [x] `CONFIG_MBEDTLS_HARDWARE_ECC=n` tested — no change, eliminated
-  - [ ] Pending: plain HTTP test (Step 2) — determines whether mbedTLS is involved at all
-  - [ ] Pending: `CONFIG_MBEDTLS_HARDWARE_MPI=n` test (Step 3) — if Step 2 implicates TLS
-  - [ ] Pending: read `DIAG_CB()` checkpoint output (Step 4) — pinpoints exact operation
+  - [x] `CONFIG_MBEDTLS_HARDWARE_ECC=n` — no change, eliminated
+  - [x] Plain HTTP (no TLS, no mbedTLS) — crash still occurs, mbedTLS fully eliminated
+  - [ ] Pending: reflash latest build and read DIAG_CB checkpoints (Step 3)
+  - [ ] Pending: try `CONFIG_ESP_WIFI_STATIC_RX_BUFFER=y` (Step 4) — primary fix candidate
