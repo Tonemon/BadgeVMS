@@ -29,6 +29,7 @@ idf_component_register(
      "pathfuncs.c"
      "task.c"
      "thirdparty/cJSON.c"
+     "tls_server.c"
      "thirdparty/dlmalloc.c"
      "thirdparty/tomlc17.c"
      "user_event.c"
@@ -102,6 +103,7 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     HAVE_MREMAP=0
     MORECORE=why_sbrk
     MORECORE_CONTIGUOUS=1
+    MORECORE_CANNOT_TRIM=1
     NO_MALLINFO
     malloc_getpagesize=0x10000
 )

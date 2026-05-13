@@ -18,6 +18,7 @@
 
 #include "esp_log.h"
 #include "esp_ota_ops.h"
+#include "esp_partition.h"
 #include "task.h"
 
 #include <stdatomic.h>
@@ -195,4 +196,16 @@ bool validate_ota_partition() {
 
 void invalidate_ota_partition() {
     esp_ota_mark_app_invalid_rollback_and_reboot();
+}
+
+size_t ota_get_firmware_size(void) {
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    if (!running) return 0;
+    return running->size;
+}
+
+bool ota_read_firmware(size_t offset, void *buf, size_t len) {
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    if (!running) return false;
+    return esp_partition_read(running, offset, buf, len) == ESP_OK;
 }

@@ -421,7 +421,8 @@ const char *bt_get_own_name(void) {
 
 void bt_get_own_addr_str(char *out, size_t n) {
     uint8_t mac[6];
-    esp_read_mac(mac, ESP_MAC_BT);
+    if (esp_read_mac(mac, ESP_MAC_BT) != ESP_OK)
+        esp_read_mac(mac, ESP_MAC_WIFI_STA);
     snprintf(out, n, "%02X:%02X:%02X:%02X:%02X:%02X",
              mac[5], mac[4], mac[3], mac[2], mac[1], mac[0]);
 }
@@ -816,9 +817,10 @@ device_t *bluetooth_create(void) {
     iris_state.event_group = xEventGroupCreate();
     iris_state.status      = BT_DISABLED;
 
-    /* Derive default name from BT MAC */
+    /* Derive default name from BT MAC (fall back to WiFi STA MAC on P4) */
     uint8_t mac[6];
-    esp_read_mac(mac, ESP_MAC_BT);
+    if (esp_read_mac(mac, ESP_MAC_BT) != ESP_OK)
+        esp_read_mac(mac, ESP_MAC_WIFI_STA);
     snprintf(iris_state.own_name, sizeof(iris_state.own_name),
              "WHY2025-%02X%02X", mac[4], mac[5]);
 

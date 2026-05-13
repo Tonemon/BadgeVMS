@@ -20,8 +20,6 @@ typedef struct {
     char          *version;
     char          *description;
     bool           is_firmware;
-    bool           is_new_install;
-    bool           selected;
 } update_item_t;
 
 typedef struct http_data {
@@ -45,8 +43,6 @@ size_t list_default_applications(char ***app_slugs);
 char  *source_to_name(application_source_t s);
 void   badgehub_ping();
 
-typedef void (*check_status_cb_t)(const char *status, void *userdata);
-
 bool   run_update_window(update_item_t *updates, size_t num);
 bool   run_update_window_with_check(void);
-size_t perform_update_check(update_item_t **updates, check_status_cb_t cb, void *userdata, bool force_reinstall);
+size_t perform_update_check(update_item_t **updates);

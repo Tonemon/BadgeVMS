@@ -38,6 +38,7 @@ include:
   - badgevms/misc_funcs.h
   - badgevms/ota.h
   - badgevms/process.h
+  - badgevms/tls_server.h
   - badgevms/wifi.h
   - curl/curl.h
   - wrapped_funcs.h
@@ -928,14 +929,17 @@ simple_function:
   - bt_set_own_name
   - device_get
   - get_mac_address
+  - get_dev_fd
   - get_num_tasks
   - compositor_get_autorotate
   - compositor_inject_keyboard_event
   - compositor_set_autorotate
   - get_screen_info
   - mkdir_p
+  - ota_get_firmware_size
   - ota_get_invalid_version
   - ota_get_running_version
+  - ota_read_firmware
   - ota_session_abort
   - ota_session_commit
   - ota_session_open
@@ -957,6 +961,16 @@ simple_function:
   - wait
   - wifi_connect
   - wifi_disconnect
+  - tls_generate_selfsigned
+  - tls_server_ctx_create
+  - tls_server_ctx_free
+  - tls_server_accept_fd
+  - tls_conn_read
+  - tls_conn_write
+  - tls_conn_close
+  - wifi_set_ap_sta_joined_cb
+  - wifi_start_ap
+  - wifi_stop_ap
   - wifi_get_connection_station
   - wifi_get_connection_status
   - wifi_get_status
@@ -1068,6 +1082,7 @@ simple_function_extern:
   - __truncsfhf2
   - __udivdi3
   - __umoddi3
+  - __unorddf2
 
 simple_object:
   - _ctype_b
@@ -1126,6 +1141,7 @@ wrapped_function:
   - getenv
   - getline
   - getpid
+  - getsockname
   - gets
   - gmtime
   - iconv_close
@@ -1133,6 +1149,8 @@ wrapped_function:
   - isatty
   - listen
   - localtime
+  - recvfrom
+  - sendto
   - lseek
   - malloc
   - mkdir
@@ -1158,6 +1176,7 @@ wrapped_function:
   - setbuf
   - setbuffer
   - setlinebuf
+  - setsockopt
   - setvbuf
   - snprintf
   - socket

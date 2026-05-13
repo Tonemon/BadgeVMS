@@ -1,8 +1,8 @@
 {
     "unique_identifier": "why2025_ota",
     "name": "WHY 2025 OTA updater",
-    "author": "Team:Badge",
-    "version": "4",
+    "author": "Team:Badge & ThatOneGuy",
+    "version": "5",
     "interpreter": "",
     "metadata_file": "",
     "binary_path": "why2025_ota.elf",

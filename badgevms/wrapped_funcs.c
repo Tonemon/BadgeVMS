@@ -385,7 +385,7 @@ int why_socket(int domain, int type, int protocol) {
     task_info_t *task_info = get_task_info();
     ESP_LOGW("why_socket", "Calling socket from task %p", task_info->handle);
 
-    if (domain != AF_INET || type != SOCK_STREAM || protocol != 0) {
+    if (domain != AF_INET) {
         task_info->_errno = EAFNOSUPPORT;
         return -1;
     }
@@ -427,7 +427,7 @@ int why_socket(int domain, int type, int protocol) {
 
 static inline int _why_task_get_socket(int fd) {
     task_info_t *task_info = get_task_info();
-    ESP_LOGW("why_open_socket", "Calling open socket from task %p fd %i", task_info->handle, fd);
+    ESP_LOGD("why_open_socket", "Calling open socket from task %p fd %i", task_info->handle, fd);
 
     if (fd < 0 || fd >= MAXFD || !task_info->thread->file_handles[fd].is_open) {
         task_info->_errno = EBADF;
@@ -522,6 +522,33 @@ int why_bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
     return bind(sock, (struct sockaddr *)addr_in, addrlen);
 }
 
+ssize_t why_recvfrom(int sockfd, void *buf, size_t len, int flags,
+                     struct sockaddr *src_addr, socklen_t *addrlen) {
+    int sock = _why_task_get_socket(sockfd);
+    if (sock < 0) { get_task_info()->_errno = EBADF; return -1; }
+    return recvfrom(sock, buf, len, flags, src_addr, addrlen);
+}
+
+ssize_t why_sendto(int sockfd, const void *buf, size_t len, int flags,
+                   const struct sockaddr *dest_addr, socklen_t addrlen) {
+    int sock = _why_task_get_socket(sockfd);
+    if (sock < 0) { get_task_info()->_errno = EBADF; return -1; }
+    return sendto(sock, buf, len, flags, dest_addr, addrlen);
+}
+
+int why_setsockopt(int sockfd, int level, int optname,
+                   const void *optval, socklen_t optlen) {
+    int sock = _why_task_get_socket(sockfd);
+    if (sock < 0) { get_task_info()->_errno = EBADF; return -1; }
+    return setsockopt(sock, level, optname, optval, optlen);
+}
+
+int why_getsockname(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
+    int sock = _why_task_get_socket(sockfd);
+    if (sock < 0) { get_task_info()->_errno = EBADF; return -1; }
+    return getsockname(sock, addr, addrlen);
+}
+
 int why_open(char const *pathname, int flags, mode_t mode) {
     task_info_t *task_info = get_task_info();
     ESP_LOGI("why_open", "Calling open from task %p for path %s", task_info->handle, pathname);
@@ -597,6 +624,13 @@ int why_close(int fd) {
 out:
     task_info->_errno = EBADF;
     return -1;
+}
+
+int get_dev_fd(int task_fd) {
+    task_info_t *task_info = get_task_info();
+    if (task_fd < 0 || task_fd >= MAXFD || !task_info->thread->file_handles[task_fd].is_open)
+        return -1;
+    return task_info->thread->file_handles[task_fd].dev_fd;
 }
 
 pid_t why_getpid(void) {

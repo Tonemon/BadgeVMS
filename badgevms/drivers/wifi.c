@@ -81,10 +81,18 @@ static wifi_status_t status;
 static TaskHandle_t  hermes_handle;
 static QueueHandle_t hermes_queue;
 static esp_netif_t  *s_sta_netif = NULL;
+static esp_netif_t  *s_ap_netif  = NULL;
 
 static EventGroupHandle_t           wifi_event_group;
 static esp_event_handler_instance_t instance_any_id;
 static esp_event_handler_instance_t instance_got_ip;
+static esp_event_handler_instance_t instance_ap_ip;
+
+static void (*s_ap_sta_joined_cb)(const uint8_t *mac, const char *ip) = NULL;
+
+void wifi_set_ap_sta_joined_cb(void (*cb)(const uint8_t *mac, const char *ip)) {
+    s_ap_sta_joined_cb = cb;
+}
 
 #define MIN_SCAN_INTERVAL       10 * 1000 * 1000
 #define MIN_SCAN_INTERVAL_EMPTY 1000 * 1000
@@ -240,6 +248,20 @@ static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_
             ESP_LOGW(TAG, "User requested disconnect");
             xEventGroupSetBits(wifi_event_group, WIFI_DISCONNECTED_BIT);
         }
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_STACONNECTED) {
+        wifi_event_ap_staconnected_t *ev = (wifi_event_ap_staconnected_t *)event_data;
+        ESP_LOGI(TAG, "AP: station joined  MAC=%02x:%02x:%02x:%02x:%02x:%02x",
+                 ev->mac[0], ev->mac[1], ev->mac[2],
+                 ev->mac[3], ev->mac[4], ev->mac[5]);
+    } else if (event_base == IP_EVENT && event_id == IP_EVENT_AP_STAIPASSIGNED) {
+        ip_event_ap_staipassigned_t *ev = (ip_event_ap_staipassigned_t *)event_data;
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ev->ip));
+        ESP_LOGI(TAG, "AP: station IP assigned  MAC=%02x:%02x:%02x:%02x:%02x:%02x  IP=%s",
+                 ev->mac[0], ev->mac[1], ev->mac[2],
+                 ev->mac[3], ev->mac[4], ev->mac[5], ip_str);
+        if (s_ap_sta_joined_cb)
+            s_ap_sta_joined_cb(ev->mac, ip_str);
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
         ESP_LOGW(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
@@ -285,7 +307,7 @@ static void hermes_do_connect() {
     }
 
     ESP_ERROR_CHECK(esp_wifi_disconnect());
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_set_mode(s_ap_netif ? WIFI_MODE_APSTA : WIFI_MODE_STA));
 
     size_t size;
     char   ssid[32]     = "WHY2025-open";
@@ -621,6 +643,9 @@ static void start_wifi() {
     ESP_ERROR_CHECK(
         esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL, &instance_got_ip)
     );
+    ESP_ERROR_CHECK(
+        esp_event_handler_instance_register(IP_EVENT, IP_EVENT_AP_STAIPASSIGNED, &event_handler, NULL, &instance_ap_ip)
+    );
 
     s_sta_netif = esp_netif_create_default_wifi_sta();
     assert(s_sta_netif);
@@ -701,6 +726,50 @@ void wifi_set_hostname(char const *hostname) {
     }
     if (s_sta_netif)
         esp_netif_set_hostname(s_sta_netif, hostname);
+}
+
+bool wifi_start_ap(const char *ssid, const char *password) {
+    if (!s_ap_netif) {
+        s_ap_netif = esp_netif_create_default_wifi_ap();
+        if (!s_ap_netif) return false;
+    }
+
+    /* Stop DHCP server before reconfiguring so we can cleanly restart it */
+    esp_netif_dhcps_stop(s_ap_netif);
+
+    wifi_config_t ap_config;
+    memset(&ap_config, 0, sizeof(ap_config));
+    strncpy((char *)ap_config.ap.ssid, ssid, sizeof(ap_config.ap.ssid) - 1);
+    ap_config.ap.ssid_len       = (uint8_t)strlen(ssid);
+    ap_config.ap.max_connection = 4;
+    ap_config.ap.channel        = 6;
+    if (password && password[0]) {
+        strncpy((char *)ap_config.ap.password, password, sizeof(ap_config.ap.password) - 1);
+        ap_config.ap.authmode = WIFI_AUTH_WPA2_PSK;
+    } else {
+        ap_config.ap.authmode = WIFI_AUTH_OPEN;
+    }
+
+    /* APSTA keeps any existing STA connection alive */
+    esp_err_t err = esp_wifi_set_mode(WIFI_MODE_APSTA);
+    if (err != ESP_OK) { ESP_LOGE(TAG, "set_mode APSTA failed: %d", err); return false; }
+
+    err = esp_wifi_set_config(WIFI_IF_AP, &ap_config);
+    if (err != ESP_OK) { ESP_LOGE(TAG, "set_config AP failed: %d", err); return false; }
+
+    esp_netif_dhcps_start(s_ap_netif);
+
+    ESP_LOGW(TAG, "AP started: ssid=%s open=%s", ssid, password && password[0] ? "no" : "yes");
+    return true;
+}
+
+void wifi_stop_ap(void) {
+    if (s_ap_netif) {
+        esp_netif_dhcps_stop(s_ap_netif);
+    }
+    /* Return to STA-only; harmless if STA is not connected */
+    esp_wifi_set_mode(WIFI_MODE_STA);
+    ESP_LOGW(TAG, "AP stopped");
 }
 
 device_t *wifi_create() {
