@@ -246,7 +246,6 @@ void draw_completion_window(UI_Context *ctx) {
     int window_h = SCREEN_HEIGHT - 60;
 
     draw_rect(ctx, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, CDE_BG_COLOR);
-
     draw_rect(ctx, window_x, window_y, window_w, window_h, CDE_PANEL_COLOR);
     draw_3d_border(ctx, window_x, window_y, window_w, window_h, 0);
 
@@ -254,43 +253,33 @@ void draw_completion_window(UI_Context *ctx) {
     draw_rect(ctx, window_x + 3, window_y + 3, window_w - 6, title_h, CDE_TITLE_BG);
     draw_text_bold(ctx, window_x + 15, window_y + 11, "System Update Complete", CDE_SELECTED_TEXT);
 
-    int content_y = window_y + window_h / 2 - 120;
+    /* Large checkmark using 8×8 block strokes */
+    int ck_cx = window_x + window_w / 2;
+    int ck_cy = window_y + 150;
+    int bs    = 8;
+    /* Left leg: short, down-right */
+    for (int k = 0; k < 4; k++)
+        draw_rect(ctx, ck_cx - 30 + k * 8, ck_cy + 24 + k * 8, bs, bs, CDE_SUCCESS_COLOR);
+    /* Right leg: long, up-right from bottom of left leg */
+    for (int k = 0; k < 8; k++)
+        draw_rect(ctx, ck_cx - 6 + k * 8, ck_cy + 52 - k * 8, bs, bs, CDE_SUCCESS_COLOR);
 
-    int icon_size = 80;
-    int icon_x    = window_x + (window_w - icon_size) / 2;
-    int icon_y    = content_y;
-
-    content_y += icon_size + 40;
-    draw_text_centered(ctx, window_x, content_y, window_w, "All Updates Completed Successfully!", CDE_TEXT_COLOR);
+    int text_y = ck_cy + 80;
+    draw_text_bold(ctx, window_x + 15, text_y, "All Updates Completed", CDE_TEXT_COLOR);
 
     char summary_text[128];
-    if (ctx->items_to_install == 1) {
+    if (ctx->items_to_install == 1)
         snprintf(summary_text, sizeof(summary_text), "1 application has been updated");
-    } else {
-        snprintf(summary_text, sizeof(summary_text), "%d applications have been updated", ctx->items_to_install);
-    }
-    draw_text_centered(ctx, window_x, content_y + 40, window_w, summary_text, CDE_TEXT_COLOR);
+    else
+        snprintf(summary_text, sizeof(summary_text), "%d applications have been updated",
+                 ctx->items_to_install);
+    draw_text(ctx, window_x + 15, text_y + FONT_HEIGHT + 12, summary_text, CDE_INACTIVE_TEXT);
 
-    if (ctx->firmware_updated) {
-        draw_text_centered(
-            ctx,
-            window_x,
-            content_y + 80,
-            window_w,
-            "Firmware update installed, please reboot",
-            CDE_TEXT_COLOR
-        );
-    }
+    if (ctx->firmware_updated)
+        draw_text(ctx, window_x + 15, text_y + FONT_HEIGHT * 2 + 24,
+                  "Firmware updated — please reboot your badge.", CDE_INACTIVE_TEXT);
 
-    draw_text_centered(
-        ctx,
-        window_x,
-        window_y + window_h - 80,
-        window_w,
-        "Your badge is now up to date.",
-        CDE_TEXT_COLOR
-    );
-    draw_text_centered(ctx, window_x, window_y + window_h - 45, window_w, "Press ESC to exit", CDE_TEXT_COLOR);
+    draw_footer_bar(ctx, "ESC: Exit", CDE_TEXT_COLOR);
 }
 
 void draw_progress_window(UI_Context *ctx) {
