@@ -56,6 +56,11 @@ extern void spi_flash_disable_interrupts_caches_and_other_cpu(void);
 extern void                     init_memory_heap_caps();
 static char const              *TAG                 = "memory";
 IRAM_ATTR static volatile pid_t current_mapped_task = 0;
+/* Counts how many cores are currently running a thread that shares the
+ * mapped task_info. Guarded by cache_mmu_mutex (portENTER_CRITICAL_SAFE).
+ * Unmap is deferred until this drops to 0 so that a thread_create sibling
+ * running on the other core does not lose its PSRAM mapping mid-execution. */
+IRAM_ATTR static volatile int current_mapped_refs = 0;
 static allocator_t              page_allocator;
 static allocator_t              framebuffer_allocator;
 
@@ -214,86 +219,76 @@ __attribute__((always_inline)) static inline void
     }
 }
 
-__attribute__((always_inline)) static inline void
-    map_regions(allocation_range_t *head_range, allocation_range_t *tail_range) {
-    uint32_t            mmu_id     = mmu_hal_get_id_from_target(MMU_TARGET_PSRAM0);
-    uintptr_t           start      = tail_range->vaddr_start;
-    uintptr_t           total_size = 0;
-    allocation_range_t *r          = head_range;
-    if (!r)
-        return;
-
-    while (r) {
-        ESP_DRAM_LOGV(
-            DRAM_STR("map_regions"),
-            "Mapping region ptr %p, vaddr_start: %p, paddr_start %p, size %u, r->next = %p",
-            r,
-            (void *)r->vaddr_start,
-            (void *)r->paddr_start,
-            r->size,
-            r->next
-        );
-
-        why_mmu_hal_map_region(mmu_id, MMU_TARGET_PSRAM0, r->vaddr_start, r->paddr_start, r->size);
-        total_size += r->size;
-        r           = r->next;
-    }
-
-    // Invalidate all caches at once
-    invalidate_caches(start, total_size);
-}
 
 IRAM_ATTR void remap_task(task_info_t *task_info) {
-    if (current_mapped_task) {
-        ESP_DRAM_LOGE(DRAM_STR("map_task"), "Expected task %u but actual current task is %u", 0, current_mapped_task);
-        esp_system_abort("Task info does not match");
-    }
-
     uint32_t mmu_id = mmu_hal_get_id_from_target(MMU_TARGET_PSRAM0);
 
     critical_enter();
+    if (current_mapped_task == task_info->pid) {
+        current_mapped_refs++;
+        critical_exit();
+        invalidate_caches(task_info->thread->start, task_info->thread->size);
+        return;
+    }
+    if (current_mapped_task != 0) {
+        critical_exit();
+        ESP_DRAM_LOGE(DRAM_STR("map_task"), "Expected task %u but actual current task is %u", 0, current_mapped_task);
+        esp_system_abort("Task info does not match");
+        return;
+    }
+
     allocation_range_t *r = task_info->thread->pages;
     while (r) {
         why_mmu_hal_map_region(mmu_id, MMU_TARGET_PSRAM0, r->vaddr_start, r->paddr_start, r->size);
         r = r->next;
     }
-
-    // Invalidate all caches at once
-    invalidate_caches(task_info->thread->start, task_info->thread->size);
     current_mapped_task = task_info->pid;
+    current_mapped_refs = 1;
     critical_exit();
+    /* Invalidate outside the lock: only MMU writes need the spinlock.
+     * The task cannot start executing until this hook returns, so the
+     * invalidation completes before any code accesses the newly mapped pages. */
+    invalidate_caches(task_info->thread->start, task_info->thread->size);
 }
 
 void IRAM_ATTR unmap_task(task_info_t *task_info) {
+    allocation_range_t *r = task_info->thread->pages;
+    /* Writeback before taking the lock: only MMU writes need the spinlock.
+     * Nothing can dirty these pages while we are in the context-switch hook —
+     * the task is already off the CPU and Core 0 only touches framebuffer pages. */
+    if (r) {
+        writeback_caches(task_info->thread->start, task_info->thread->size);
+    }
+
+    critical_enter();
     if (current_mapped_task != task_info->pid) {
+        pid_t actual = current_mapped_task;
+        critical_exit();
         ESP_DRAM_LOGE(
             DRAM_STR("unmap_task"),
             "Expected task %u but actual current task is %u",
             task_info->pid,
-            current_mapped_task
+            actual
         );
         esp_system_abort("Task info does not match");
+        return;
     }
 
-    // esp_rom_printf("Unmappingg %u\n", task_info->pid);
-    allocation_range_t *r = task_info->thread->pages;
-    if (!r) {
-        // Nothing to do, whatever is in ram is still in ram
-        goto out;
+    current_mapped_refs--;
+    if (current_mapped_refs > 0) {
+        critical_exit();
+        return;
     }
 
-    uint32_t mmu_id = why_mmu_hal_get_id_from_target(MMU_TARGET_PSRAM0);
-
-    critical_enter();
-    writeback_caches(task_info->thread->start, task_info->thread->size);
-
-    while (r) {
-        why_mmu_hal_unmap_region(mmu_id, r->vaddr_start, r->size);
-        r = r->next;
+    if (r) {
+        uint32_t mmu_id = why_mmu_hal_get_id_from_target(MMU_TARGET_PSRAM0);
+        while (r) {
+            why_mmu_hal_unmap_region(mmu_id, r->vaddr_start, r->size);
+            r = r->next;
+        }
     }
-    critical_exit();
-out:
     current_mapped_task = 0;
+    critical_exit();
 }
 
 IRAM_ATTR void pages_deallocate(allocation_range_t *head_range) {
@@ -416,9 +411,22 @@ void IRAM_ATTR framebuffer_vaddr_deallocate(uintptr_t start_address) {
 }
 
 void IRAM_ATTR framebuffer_map_pages(allocation_range_t *head_range, allocation_range_t *tail_range) {
+    uint32_t            mmu_id     = mmu_hal_get_id_from_target(MMU_TARGET_PSRAM0);
+    uintptr_t           start      = tail_range->vaddr_start;
+    uintptr_t           total_size = 0;
+    allocation_range_t *r          = head_range;
+
     critical_enter();
-    map_regions(head_range, tail_range);
+    while (r) {
+        why_mmu_hal_map_region(mmu_id, MMU_TARGET_PSRAM0, r->vaddr_start, r->paddr_start, r->size);
+        total_size += r->size;
+        r           = r->next;
+    }
     critical_exit();
+    /* Invalidate outside the lock: only MMU writes need the spinlock.
+     * Matches the pattern used in remap_task. */
+    if (total_size > 0)
+        invalidate_caches(start, total_size);
 }
 
 void IRAM_ATTR framebuffer_unmap_pages(allocation_range_t *head_range) {
@@ -471,9 +479,17 @@ void IRAM_ATTR NOINLINE_ATTR *why_sbrk(intptr_t increment) {
         );
 
         // Map our new page table entries in one atomic operation
+        uint32_t mmu_id_sbrk = mmu_hal_get_id_from_target(MMU_TARGET_PSRAM0);
+        uintptr_t sbrk_start = tail_range->vaddr_start;
+        uintptr_t sbrk_size  = 0;
         critical_enter();
         {
-            map_regions(head_range, tail_range);
+            allocation_range_t *rr = head_range;
+            while (rr) {
+                why_mmu_hal_map_region(mmu_id_sbrk, MMU_TARGET_PSRAM0, rr->vaddr_start, rr->paddr_start, rr->size);
+                sbrk_size += rr->size;
+                rr         = rr->next;
+            }
 
             tail_range->next         = task_info->thread->pages;
             task_info->thread->pages = head_range;
@@ -482,6 +498,9 @@ void IRAM_ATTR NOINLINE_ATTR *why_sbrk(intptr_t increment) {
             task_info->thread->end  += increment;
         }
         critical_exit();
+        /* Invalidate outside the lock — same pattern as remap_task */
+        if (sbrk_size > 0)
+            invalidate_caches(sbrk_start, sbrk_size);
     } else {
         // increment is negative; free exactly |increment| bytes, not (size - |increment|)
         int32_t  decrement_amount = (int32_t)(-increment);
@@ -709,12 +728,8 @@ size_t get_total_framebuffer_pages() {
 }
 
 void writeback_and_invalidate_task(task_info_t *task_info) {
-    critical_enter();
-    {
-        writeback_caches(task_info->thread->start, task_info->thread->size);
-        invalidate_caches(task_info->thread->start, task_info->thread->size);
-    }
-    critical_exit();
+    writeback_caches(task_info->thread->start, task_info->thread->size);
+    invalidate_caches(task_info->thread->start, task_info->thread->size);
 }
 
 void IRAM_ATTR memory_init() {
