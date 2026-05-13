@@ -645,46 +645,62 @@ static void draw_host_settings(UI_Context *ctx) {
     draw_rect(ctx, window_x + 3, window_y + 3, window_w - 6, title_h, CDE_TITLE_BG);
     draw_text_bold(ctx, window_x + 15, window_y + 11, "OTA Host Settings", CDE_SELECTED_TEXT);
 
-    int list_x = window_x + 20;
-    int item_h = 70;
+    int list_y      = window_y + title_h + 20;
+    int list_h      = window_h - title_h - 80;
+    int item_height = 65;
 
-    /* Entry 0: WiFi network name */
-    {
-        int  row_y   = window_y + title_h + 20;
-        bool selected = (ctx->host_settings_selected == 0);
-        if (selected)
-            draw_rect(ctx, list_x, row_y, window_w - 40, item_h - 4, CDE_SELECTED_BG);
-        Uint32 label_color = selected ? CDE_SELECTED_TEXT : CDE_TEXT_COLOR;
-        draw_text(ctx, list_x + 10, row_y + 8, "WiFi network name", label_color);
+    draw_rect(ctx, window_x + 15, list_y, window_w - 30, list_h, 0xFFFFFF);
+    draw_3d_border(ctx, window_x + 15, list_y, window_w - 30, list_h, 1);
 
-        char display[66];
-        if (ctx->host_text_edit_active && selected) {
-            snprintf(display, sizeof(display), "%s|", ctx->host_text_edit_buf);
+    static const uint16_t * const hs_icons[HOST_SETTINGS_NUM_ENTRIES]  = { ICON_SIGNAL, ICON_LOCK };
+    static const Uint32            hs_colors[HOST_SETTINGS_NUM_ENTRIES] = { 0x0070C0, 0x287030 };
+
+    for (int i = 0; i < HOST_SETTINGS_NUM_ENTRIES; i++) {
+        int    item_y = list_y + 3 + i * item_height;
+        int    item_x = window_x + 18;
+        int    item_w = window_w - 36;
+        bool   sel    = (i == ctx->host_settings_selected);
+        Uint32 tc     = sel ? CDE_SELECTED_TEXT : CDE_TEXT_COLOR;
+        Uint32 vc     = sel ? CDE_SELECTED_TEXT : CDE_INACTIVE_TEXT;
+
+        if (sel)
+            draw_rect(ctx, item_x, item_y, item_w, item_height - 2, CDE_SELECTED_BG);
+
+        int icon_x = item_x + 10;
+        int icon_y = item_y + (item_height - 48) / 2;
+        draw_rect(ctx, icon_x, icon_y, 48, 48, sel ? CDE_BORDER_LIGHT : CDE_BUTTON_COLOR);
+        draw_3d_border(ctx, icon_x, icon_y, 48, 48, 1);
+        draw_pixel_icon(ctx, icon_x, icon_y, hs_icons[i], hs_colors[i]);
+
+        int text_x = icon_x + 48 + 15;
+
+        if (i == 0) {
+            draw_text_bold(ctx, text_x, item_y + 12, "WiFi network name", tc);
+            char display[66];
+            if (ctx->host_text_edit_active && sel)
+                snprintf(display, sizeof(display), "%s|", ctx->host_text_edit_buf);
+            else {
+                strncpy(display, ctx->host_ssid, sizeof(display) - 1);
+                display[sizeof(display) - 1] = '\0';
+            }
+            draw_text(ctx, text_x, item_y + 40, display, vc);
         } else {
-            strncpy(display, ctx->host_ssid, sizeof(display) - 1);
-            display[sizeof(display) - 1] = '\0';
+            draw_text_bold(ctx, text_x, item_y + 12, "Use HTTPS with self-signed certs", tc);
+            const char *val_str   = ctx->host_self_signed_cert ? "ON" : "OFF";
+            Uint32      val_color = sel ? CDE_SELECTED_TEXT
+                                        : (ctx->host_self_signed_cert ? CDE_SUCCESS_COLOR
+                                                                       : CDE_INACTIVE_TEXT);
+            draw_text(ctx, text_x, item_y + 40, val_str, val_color);
         }
-        Uint32 val_color = selected ? CDE_SELECTED_TEXT : CDE_INACTIVE_TEXT;
-        draw_text(ctx, list_x + 10, row_y + 36, display, val_color);
-    }
 
-    /* Entry 1: Generate self-signed certificate */
-    {
-        int  row_y   = window_y + title_h + 20 + item_h;
-        bool selected = (ctx->host_settings_selected == 1);
-        if (selected)
-            draw_rect(ctx, list_x, row_y, window_w - 40, item_h - 4, CDE_SELECTED_BG);
-        Uint32 label_color = selected ? CDE_SELECTED_TEXT : CDE_TEXT_COLOR;
-        draw_text(ctx, list_x + 10, row_y + 8, "Generate self-signed certificate", label_color);
-        const char *val_str   = ctx->host_self_signed_cert ? "ON" : "OFF";
-        Uint32      val_color = selected ? CDE_SELECTED_TEXT : CDE_INACTIVE_TEXT;
-        draw_text(ctx, list_x + 10, row_y + 36, val_str, val_color);
+        if (i < HOST_SETTINGS_NUM_ENTRIES - 1)
+            draw_rect(ctx, item_x, item_y + item_height - 2, item_w, 1, CDE_BORDER_DARK);
     }
 
     const char *footer = ctx->host_text_edit_active
         ? "Type to edit   ENTER: Confirm   ESC: Cancel   BACKSPACE: Delete"
         : "UP/DOWN: Navigate   ENTER: Edit/Toggle   ESC: Back";
-    draw_text_centered(ctx, window_x, window_y + window_h - 45, window_w, footer, CDE_TEXT_COLOR);
+    draw_footer_bar(ctx, footer, CDE_TEXT_COLOR);
 }
 
 #define SETTINGS_NUM_ENTRIES 5
