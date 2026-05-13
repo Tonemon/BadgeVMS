@@ -1100,7 +1100,6 @@ void draw_no_updates_window(UI_Context *ctx) {
     int window_h = SCREEN_HEIGHT - 60;
 
     draw_rect(ctx, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, CDE_BG_COLOR);
-
     draw_rect(ctx, window_x, window_y, window_w, window_h, CDE_PANEL_COLOR);
     draw_3d_border(ctx, window_x, window_y, window_w, window_h, 0);
 
@@ -1108,32 +1107,21 @@ void draw_no_updates_window(UI_Context *ctx) {
     draw_rect(ctx, window_x + 3, window_y + 3, window_w - 6, title_h, CDE_TITLE_BG);
     draw_text_bold(ctx, window_x + 15, window_y + 11, "System Update Check", CDE_SELECTED_TEXT);
 
-    int content_y = window_y + window_h / 2 - 80;
+    /* Large checkmark (same as completion screen) */
+    int ck_cx = window_x + window_w / 2;
+    int ck_cy = window_y + 150;
+    int bs    = 8;
+    for (int k = 0; k < 4; k++)
+        draw_rect(ctx, ck_cx - 30 + k * 8, ck_cy + 24 + k * 8, bs, bs, CDE_SUCCESS_COLOR);
+    for (int k = 0; k < 8; k++)
+        draw_rect(ctx, ck_cx - 6 + k * 8, ck_cy + 52 - k * 8, bs, bs, CDE_SUCCESS_COLOR);
 
-    int icon_size = 60;
-    int icon_x    = window_x + (window_w - icon_size) / 2;
-    int icon_y    = content_y;
+    int text_y = ck_cy + 80;
+    draw_text_bold(ctx, window_x + 15, text_y, "Your system is up to date!", CDE_TEXT_COLOR);
+    draw_text(ctx, window_x + 15, text_y + FONT_HEIGHT + 12,
+              "No updates are available at this time.", CDE_INACTIVE_TEXT);
 
-    draw_rect(ctx, icon_x + 10, icon_y + 30, 15, 4, CDE_SUCCESS_COLOR);
-    draw_rect(ctx, icon_x + 22, icon_y + 27, 4, 10, CDE_SUCCESS_COLOR);
-    draw_rect(ctx, icon_x + 25, icon_y + 20, 4, 10, CDE_SUCCESS_COLOR);
-    draw_rect(ctx, icon_x + 28, icon_y + 15, 4, 10, CDE_SUCCESS_COLOR);
-    draw_rect(ctx, icon_x + 31, icon_y + 10, 4, 10, CDE_SUCCESS_COLOR);
-    draw_rect(ctx, icon_x + 34, icon_y + 5, 4, 10, CDE_SUCCESS_COLOR);
-
-    content_y += icon_size + 40;
-    draw_text_centered(ctx, window_x, content_y, window_w, "Your system is up to date!", CDE_TEXT_COLOR);
-
-    draw_text_centered(
-        ctx,
-        window_x,
-        content_y + 40,
-        window_w,
-        "No updates are available at this time.",
-        CDE_TEXT_COLOR
-    );
-
-    draw_text_centered(ctx, window_x, window_y + window_h - 45, window_w, "Press ESC to exit", CDE_TEXT_COLOR);
+    draw_footer_bar(ctx, "ESC: Exit", CDE_TEXT_COLOR);
 }
 
 bool run_update_window_with_check(void) {
