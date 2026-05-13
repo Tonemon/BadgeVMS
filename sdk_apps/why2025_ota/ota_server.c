@@ -411,28 +411,14 @@ static void handle_connection(conn_ctx_t *c, const char *our_ip,
     }
 }
 
-/* ── Corruption monitor (polls ap_sta_joined[0] every 50 ms) ─── */
-
-static void psram_corruption_monitor(void *arg) {
-    (void)arg;
-    uint32_t paddr = vaddr_to_paddr((uint32_t)(uintptr_t)ap_sta_joined);
-    uint32_t expected;
-    memcpy(&expected, (void *)ap_sta_joined, 4);
-    printf("[OTA monitor] start: ap_sta_joined=%p paddr=0x%08lx word=0x%08lx\n",
-           (void *)ap_sta_joined, (unsigned long)paddr, (unsigned long)expected);
-    unsigned int ticks = 0;
-    for (;;) {
-        usleep(50000); /* 50 ms */
-        ticks++;
-        uint32_t cur;
-        memcpy(&cur, (void *)ap_sta_joined, 4);
-        if (cur != expected) {
-            printf("[OTA monitor] CORRUPTION at t=%ums! 0x%08lx -> 0x%08lx\n",
-                   ticks * 50, (unsigned long)expected, (unsigned long)cur);
-            expected = cur;
-        }
-    }
-}
+/* ── Corruption monitor state (checked inline in accept loop) ─── */
+/* NOTE: do NOT use thread_create for this check. The badge is dual-core
+ * (ESP32-P4) and BadgeVMS's remap_task aborts if current_mapped_task != 0
+ * when a thread switches in on the second core. Sharing PSRAM context via
+ * thread_create causes remap_task to fire esp_system_abort on Core 1
+ * whenever the OTA server still holds the mapped-task token on Core 0,
+ * deadlocking the panic handler and triggering the HP System WDT. */
+static uint32_t g_monitor_expected = 0;
 
 /* ── HTTP server loop (runs in background thread) ─────────────── */
 
@@ -450,7 +436,12 @@ void ota_host_server_thread(void *arg) {
     wifi_set_ap_sta_joined_cb(ap_sta_joined);
     wifi_start_ap("WHY2025-open", "");
     DIAG_CB(); /* after wifi_start_ap */
-    thread_create(psram_corruption_monitor, NULL, 4096);
+    memcpy(&g_monitor_expected, (void *)ap_sta_joined, 4);
+    {
+        uint32_t paddr = vaddr_to_paddr((uint32_t)(uintptr_t)ap_sta_joined);
+        printf("[OTA monitor] start: ap_sta_joined=%p paddr=0x%08lx word=0x%08lx\n",
+               (void *)ap_sta_joined, (unsigned long)paddr, (unsigned long)g_monitor_expected);
+    }
     strncpy(s->ip, "192.168.4.1", sizeof(s->ip) - 1);
     s->ip[sizeof(s->ip) - 1] = '\0';
 
@@ -484,7 +475,16 @@ void ota_host_server_thread(void *arg) {
         struct sockaddr_in cli;
         socklen_t          cli_len = sizeof(cli);
         int cfd = accept(lfd, (struct sockaddr *)&cli, &cli_len);
-        if (cfd < 0) continue;
+        if (cfd < 0) {
+            uint32_t cur;
+            memcpy(&cur, (void *)ap_sta_joined, 4);
+            if (cur != g_monitor_expected) {
+                printf("[OTA monitor] CORRUPTION! ap_sta_joined 0x%08lx -> 0x%08lx\n",
+                       (unsigned long)g_monitor_expected, (unsigned long)cur);
+                g_monitor_expected = cur;
+            }
+            continue;
+        }
 
         struct timeval rtv = {.tv_sec = 10, .tv_usec = 0};
         setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &rtv, sizeof(rtv));
