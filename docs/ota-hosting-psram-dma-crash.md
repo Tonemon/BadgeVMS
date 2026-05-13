@@ -224,22 +224,37 @@ client ever associated. This run ended as a WDT reset (`rst:0x7`) rather than an
 Instruction, meaning the DMA write landed on heap free-list metadata instead of code
 this time (same DMA, different victim address).
 
-### Step 4 — Force WiFi RX buffers out of PSRAM (primary fix candidate)
+### Step 4 — Disable AMPDU RX (primary fix candidate)
 
-The WiFi driver allocates RX frame buffers from the heap. With `CONFIG_SPIRAM=y`, that
-heap is PSRAM — the same region where the loaded app code lives. A DMA descriptor with
-a wrong buffer pointer or overflowed length can land a write inside the app's code.
-Forcing static, internal-RAM WiFi buffers removes the overlap entirely:
+`SPIRAM_USE_MEMMAP=y` is set — the standard heap is internal SRAM only, not PSRAM.
+`SPIRAM_TRY_ALLOCATE_WIFI_LWIP` is not applicable (depends on CAPS_ALLOC or MALLOC,
+neither of which is active). WiFi static and dynamic buffers are already in internal
+RAM. The DMA is NOT writing to a PSRAM-based WiFi buffer at the wrong address; it is
+writing a received 802.11 frame to the wrong PSRAM address entirely.
+
+The 4 bytes written (`D0 BA 00 00` in memory, little-endian word `0x0000BAD0`) decode as:
+
+| Byte | Value | Meaning |
+|---|---|---|
+| 0 | `0xD0` | 802.11 FC byte 0: Management frame, subtype 13 = **Action** |
+| 1 | `0xBA` | 802.11 FC byte 1: flags |
+| 2–3 | `0x00 0x00` | Duration/ID = 0 |
+
+This is the first 4 bytes of a received **802.11 Action frame** — the frame type used
+for AMPDU Block Ack negotiation (AddBA Request/Response). With AMPDU RX enabled, the
+WiFi driver sets up dedicated DMA descriptors for the Block Ack RX path. A bug in that
+descriptor's buffer address causes the received frame to land at `0x4a095ff8` (PSRAM,
+inside `ap_sta_joined`) instead of the intended internal SRAM buffer.
+
+Applied fix:
 
 ```
-CONFIG_ESP_WIFI_STATIC_RX_BUFFER=y
-CONFIG_ESP_WIFI_STATIC_RX_BUFFER_SIZE=1600
-CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=10
-CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=0
+# CONFIG_ESP_WIFI_AMPDU_RX_ENABLED is not set
+# (CONFIG_ESP_WIFI_RX_BA_WIN removed — depends on AMPDU_RX)
 ```
 
-Rebuild and retest (TLS on or off). If the crash disappears, WiFi DMA buffer placement
-is confirmed as the root cause and this config is the fix.
+Rebuild and retest. If the crash disappears, the AMPDU RX DMA descriptor bug is the
+root cause. AMPDU TX is left enabled; only the RX Block Ack path has the wrong address.
 
 ### Step 5 — Heap integrity alongside code corruption (supplementary)
 
@@ -367,4 +382,4 @@ the `ap_sta_joined` callback exactly as the old badge would.
   - [x] `CONFIG_MBEDTLS_HARDWARE_ECC=n` — no change, eliminated
   - [x] Plain HTTP (no TLS, no mbedTLS) — crash still occurs, mbedTLS fully eliminated
   - [x] DIAG_CB checkpoints A and B both clean — wifi_start_ap is innocent; corruption is from ongoing frame-RX DMA
-  - [ ] Pending: try `CONFIG_ESP_WIFI_STATIC_RX_BUFFER=y` (Step 4) — primary fix candidate
+  - [ ] Pending: rebuild with `CONFIG_ESP_WIFI_AMPDU_RX_ENABLED=n` (Step 4) — applied to sdkconfig
