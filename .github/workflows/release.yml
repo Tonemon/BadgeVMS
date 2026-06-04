@@ -34,16 +34,6 @@ jobs:
             0x10000  build/badgevms.bin \
             0x410000 build/storage.bin
 
-      - name: Merge C6 binaries
-        run: |
-          python -m esptool --chip esp32c6 merge_bin \
-            --output esp32c6.bin \
-            --flash_mode dio --flash_freq 80m --flash_size 4MB \
-            0x0     connectivity_esp_hosted/slave/build/bootloader/bootloader.bin \
-            0x8000  connectivity_esp_hosted/slave/build/partition_table/partition-table.bin \
-            0xd000  connectivity_esp_hosted/slave/build/ota_data_initial.bin \
-            0x10000 connectivity_esp_hosted/slave/build/network_adapter.bin
-
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
@@ -51,18 +41,14 @@ jobs:
           body: |
             ## Flash instructions
 
-            Download both files below and flash each chip:
+            Download `esp32p4.bin` below and flash it via the badge's USB-C port:
 
             ```
             pip install esptool
             esptool write_flash 0x0 esp32p4.bin
-            esptool write_flash 0x0 esp32c6.bin
             ```
 
-            `esp32p4.bin` — main processor (ESP32-P4)
-            `esp32c6.bin` — Wi-Fi/Bluetooth coprocessor (ESP32-C6)
-
-            Connect each chip's USB port in turn when running the commands above.
+            The Wi-Fi coprocessor (ESP32-C6) is flashed automatically by the
+            badge on first boot — no second command needed.
           files: |
             esp32p4.bin
-            esp32c6.bin

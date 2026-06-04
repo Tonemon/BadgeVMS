@@ -19,18 +19,17 @@ Some feature highlights:
 
 ## Flashing a pre-built release
 
-Download `esp32p4.bin` and `esp32c6.bin` from the
-[Releases page](https://github.com/Tonemon/BadgeVMS/releases), then flash each chip:
+Download `esp32p4.bin` from the
+[Releases page](https://github.com/Tonemon/BadgeVMS/releases) and flash it via
+the badge's USB-C port:
 
 ```bash
 pip install esptool
 esptool write_flash 0x0 esp32p4.bin
-esptool write_flash 0x0 esp32c6.bin
 ```
 
-`esp32p4.bin` targets the main ESP32-P4 processor; `esp32c6.bin` targets the
-ESP32-C6 Wi-Fi/Bluetooth coprocessor. Connect each chip's USB port in turn when
-running the commands above.
+The Wi-Fi coprocessor (ESP32-C6) is flashed automatically by the badge on first
+boot — no second command needed.
 
 ## Building from source
 
