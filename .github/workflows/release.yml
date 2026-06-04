@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'badgevms-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    container:
+      image: espressif/idf:v5.5.4
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build
+        run: idf.py build
+
+      - name: Merge P4 binaries
+        run: |
+          python -m esptool --chip esp32p4 merge_bin \
+            --output esp32p4.bin \
+            --flash_mode dio --flash_freq 80m --flash_size 16MB \
+            0x2000   build/bootloader/bootloader.bin \
+            0x8000   build/partition_table/partition-table.bin \
+            0xd000   build/ota_data_initial.bin \
+            0x10000  build/badgevms.bin \
+            0x410000 build/storage.bin
+
+      - name: Merge C6 binaries
+        run: |
+          python -m esptool --chip esp32c6 merge_bin \
+            --output esp32c6.bin \
+            --flash_mode dio --flash_freq 80m --flash_size 4MB \
+            0x0     connectivity_esp_hosted/slave/build/bootloader/bootloader.bin \
+            0x8000  connectivity_esp_hosted/slave/build/partition_table/partition-table.bin \
+            0xd000  connectivity_esp_hosted/slave/build/ota_data_initial.bin \
+            0x10000 connectivity_esp_hosted/slave/build/network_adapter.bin
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          body: |
+            ## Flash instructions
+
+            Download both files below and flash each chip:
+
+            ```
+            pip install esptool
+            esptool write_flash 0x0 esp32p4.bin
+            esptool write_flash 0x0 esp32c6.bin
+            ```
+
+            `esp32p4.bin` — main processor (ESP32-P4)
+            `esp32c6.bin` — Wi-Fi/Bluetooth coprocessor (ESP32-C6)
+
+            Connect each chip's USB port in turn when running the commands above.
+          files: |
+            esp32p4.bin
+            esp32c6.bin

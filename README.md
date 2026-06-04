@@ -17,6 +17,23 @@ Some feature highlights:
 
 # Instructions
 
+## Flashing a pre-built release
+
+Download `esp32p4.bin` and `esp32c6.bin` from the
+[Releases page](https://github.com/Tonemon/BadgeVMS/releases), then flash each chip:
+
+```bash
+pip install esptool
+esptool write_flash 0x0 esp32p4.bin
+esptool write_flash 0x0 esp32c6.bin
+```
+
+`esp32p4.bin` targets the main ESP32-P4 processor; `esp32c6.bin` targets the
+ESP32-C6 Wi-Fi/Bluetooth coprocessor. Connect each chip's USB port in turn when
+running the commands above.
+
+## Building from source
+
 To build BadgeVMS you need to have esp-idf 5.5.4 or later installed. For installation instructions see here: https://docs.espressif.com/projects/esp-idf/en/stable/esp32/get-started/index.html.
 
 If you already have an older version of esp-idf installed, upgrade it to 5.5.4:
